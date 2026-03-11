@@ -1,0 +1,175 @@
+Total: 171 IN_TRANSIT tracking numbers with containers in different cities
+
+TrackNumber                     Sealine Containers   Cities  City List
+----------------------------------------------------------------------------------------------------------------------------------
+00010987                           LMCU          6        5  Genova, Karachi, Maputo, Mersin, Mombasa
+NAM9456278                         CMDU         31        3  Apapa, Lagos, Lekki
+NAM9428763                         CMDU         26        3  Apapa, Lagos, Lekki
+721015827                          MAEU         21        3  Paranagua, Qingdao, Singapore
+038VH9479897                       MSCU         10        3  Cristobal, Houston, Rodman
+MEDUAD781707                       MSCU         10        3  Las Palmas de Gran Canaria, Lome, Santa Cruz de Tenerife
+038VH9479898                       MSCU          9        3  Cristobal, Houston, Rodman
+721025370                          MAEU          8        3  Paranagua, Qingdao, Singapore
+038VH9366217                       MSCU          6        3  Puerto Barrios, Puerto Quetzal, Puerto Santo Tomas de Castilla
+NAM9451600                         CMDU          4        3  Apapa, Lagos, Lekki
+NAM9428274                         CMDU          3        3  Guatemala City, Puerto Quetzal, Puerto Santo Tomas de Castilla
+NAM9428347                         CMDU          3        3  Apapa, Lagos, Lekki
+MEDUFF054664                       MSCU         40        2  Gaziantep, Iskenderun
+SEL1828660                         CMDU         31        2  Antwerp, Kallo
+MEDUYJ079324                       MSCU         23        2  Pelabuhan Klang, Singapore
+MEDUK4665247                       MSCU         21        2  Apapa, Tincan/Lagos
+SEL1896842                         CMDU         21        2  Lagos, Shekou
+MEDUWA421967                       MSCU         21        2  Khor al Fakkan, Qingdao
+MEDUFF044756                       MSCU         20        2  Gaziantep, Iskenderun
+038VH9375155                       MSCU         20        2  Apapa, Tincan/Lagos
+038VH9315105                       MSCU         19        2  Poti, Yerevan
+SEL1864477                         CMDU         19        2  Ambarli, New York City
+038VH9348801                       MSCU         19        2  Apapa, Tincan/Lagos
+721328297                          MAEU         16        2  Houston, Pasadena
+038VH9355142A                      MSCU         13        2  Cabo de Santo Agostinho, Suape
+MEDUQU134076                       MSCU         13        2  Doha, Hamad
+27097634                           HLCU         13        2  Genova, Vignole Borbera
+038VH9370717                       MSCU         12        2  Guatemala City, Puerto Barrios
+038VH9461721                       MSCU         12        2  Haiphong, Yantian
+17385010                           HLCU         11        2  Genova, Milan
+038VH9318775                       MSCU         11        2  Ashdod, Hadera
+038VH9370364                       MSCU         11        2  Apapa, Tincan/Lagos
+038VH9350511                       MSCU         11        2  Ashdod, Haifa
+MEDUK4569662                       MSCU         10        2  Manila
+MEDUDM972615                       MSCU         10        2  Apapa, Tincan/Lagos
+038VH9375162                       MSCU         10        2  Apapa, Tincan/Lagos
+MEDUDM994056                       MSCU         10        2  Apapa, Tincan/Lagos
+NAM9428505                         CMDU         10        2  Apapa, Lagos
+721162507                          MAEU         10        2  Itajai, Paranagua
+038VH9365501                       MSCU         10        2  Apapa, Tincan/Lagos
+MEDUFF256855                       MSCU         10        2  Abu Dhabi, Mundra
+COSU6408349380                     COSU         10        2  Gaziantep, Mersin
+MEDUFF255329                       MSCU         10        2  Abu Dhabi, Mundra
+038VH9343628                       MSCU         10        2  Apapa, Tincan/Lagos
+038VH9355645                       MSCU         10        2  Apapa, Tincan/Lagos
+MEDUFF045407                       MSCU         10        2  Gaziantep, Iskenderun
+038VH9343630                       MSCU         10        2  Apapa, Tincan/Lagos
+MEDUDM992621                       MSCU         10        2  Apapa, Tincan/Lagos
+ZIMUIAH964787                      ZIMU         10        2  Ashdod, Haifa
+038VH9361053                       MSCU          9        2  Apapa, Tincan/Lagos
+038VH9372207                       MSCU          9        2  Apapa, Tincan/Lagos
+NAM9457231                         CMDU          9        2  Apapa, Lekki
+038VH9358931                       MSCU          9        2  Apapa, Tincan/Lagos
+NAM9426019                         CMDU          8        2  Ho Chi Minh City, Vung Tau
+038VH9368487                       MSCU          8        2  Apapa, Tincan/Lagos
+721352132                          MAEU          8        2  Houston, Pasadena
+721292004                          MAEU          8        2  Houston, Pasadena
+038VH9392161                       MSCU          8        2  Gdansk, Gdynia
+266507640                          MAEU          8        2  Houston, Pasadena
+038VH9362692                       MSCU          8        2  Alexandria, El Dekheila
+NAM9428346                         CMDU          8        2  Apapa, Lagos
+038VH9350111                       MSCU          8        2  Gaziantep, Iskenderun
+038VH9472123                       MSCU          8        2  Barcelona, Valencia
+NAM9452366                         CMDU          8        2  Abidjan, Algeciras
+HLCUANR250377123                   HLCU          8        2  Apapa, Lagos
+038VH9360663                       MSCU          7        2  Gaziantep, Iskenderun
+NAM9424666                         CMDU          7        2  Ho Chi Minh City, Vung Tau
+038VH9362661                       MSCU          7        2  Apapa, Tincan/Lagos
+MEDUDM982713                       MSCU          6        2  Apapa, Tincan/Lagos
+NAM9428996                         CMDU          6        2  Lagos, Lekki
+038VH9326253                       MSCU          6        2  Manila
+NAM9444951                         CMDU          6        2  Apapa, Shanghai
+MEDUK4631645                       MSCU          6        2  Apapa, Tincan/Lagos
+540036253                          EGLV          6        2  Manila, Manila South Harbour
+038VH9465510                       MSCU          6        2  Oran, Valencia
+NAM9426043                         CMDU          6        2  Ho Chi Minh City, Vung Tau
+NAM9431635                         CMDU          6        2  Lagos, Lekki
+RICFLL889700                       ONEY          6        2  Houston, La Porte
+NAM9453184                         CMDU          6        2  Cartagena, Moin
+CHP0176399                         CMDU          6        2  Lagos, Lekki
+038VH9318733                       MSCU          6        2  Laem Chabang, Lat Krabang
+038VH9360859                       MSCU          6        2  Istanbul, Mersin
+038VH9354660                       MSCU          5        2  Guayaquil, Quito
+COSU6409075600                     COSU          5        2  Chon Buri, Laem Chabang
+540387521                          EGLV          5        2  Manila, Manila South Harbour
+MEDUFF251039                       MSCU          5        2  Abu Dhabi, Mundra
+HLCUSGN2501ATMM6                   HLCU          5        2  Genova, Vignole Borbera
+038VH9483825                       MSCU          5        2  Houston, Rodman
+COSU6409072340                     COSU          5        2  Chon Buri, Laem Chabang
+038VH9318734                       MSCU          5        2  Laem Chabang, Lat Krabang
+NAM9449304                         CMDU          5        2  Lagos, Lekki
+NAM9449811                         CMDU          5        2  Lagos, Lekki
+HLCUSGN2501ATMH0                   HLCU          5        2  Genova, Vignole Borbera
+038VH9389413                       MSCU          5        2  Guayaquil, Quito
+038VH9354486                       MSCU          4        2  Guayaquil, Quito
+038VH9350039                       MSCU          4        2  Kyiv, Mostys'ka
+038VH9456923                       MSCU          4        2  Barcelona, Valencia
+NAM9436885                         CMDU          4        2  Guatemala City, Puerto Santo Tomas de Castilla
+038VH9337161                       MSCU          4        2  Bac Ninh, Haiphong
+20425670                           HLCU          4        2  Caucedo, Santo Domingo
+MEDUFF255253                       MSCU          4        2  Abu Dhabi, Mundra
+540400613                          EGLV          4        2  Manila, Manila South Harbour
+HLCURUH250400552                   HLCU          4        2  Apapa, Lagos
+038VH9363375                       MSCU          4        2  Gaziantep, Iskenderun
+MCB0302007                         CMDU          4        2  Antwerp, Kallo
+COEU9020154030                     COSU          4        2  Derince, Yarimca
+038VH9483830                       MSCU          4        2  Houston, Rodman
+038VH9483829                       MSCU          4        2  Houston, Rodman
+038VH9473942                       MSCU          4        2  Barcelona, Valencia
+721035124                          MAEU          4        2  Houston, Ningbo
+NAM9434538                         CMDU          4        2  Lagos, Lekki
+038VH9334499                       MSCU          4        2  San Antonio, Valparaiso
+038VH9364008                       MSCU          4        2  Gaziantep, Iskenderun
+HLCUJE2250311250                   HLCU          4        2  Apapa, Lagos
+NAM9426798                         CMDU          4        2  Apapa, Lekki
+038VH9318732                       MSCU          4        2  Laem Chabang, Lat Krabang
+MEDUDY442086                       MSCU          4        2  Apapa, Tincan/Lagos
+ZIMUIAH966500                      ZIMU          4        2  Ashdod, Haifa
+038VH9372918                       MSCU          4        2  Apapa, Tincan/Lagos
+NAM9430821                         CMDU          4        2  Lagos, Lekki
+MEDUVM974071                       MSCU          4        2  El Dekheila, El Qahira
+MEDUK4569621                       MSCU          3        2  Manila
+038VH9380777                       MSCU          3        2  Buenaventura, Cali
+038VH9353847                       MSCU          3        2  Cabo de Santo Agostinho, Suape
+038VH9354446A                      MSCU          3        2  Guayaquil, Quito
+HLCUBSC2502BQNP0                   HLCU          3        2  Ashdod, Haifa
+038VH1276693                       MSCU          3        2  Puerto Barrios, Puerto Quetzal
+038VH9353851                       MSCU          3        2  Cabo de Santo Agostinho, Suape
+038VH9356866                       MSCU          3        2  Guayaquil, Quito
+MEDUDY445964                       MSCU          3        2  Apapa, Tincan/Lagos
+038VH9354632                       MSCU          3        2  Guayaquil, Quito
+038VH9483823                       MSCU          3        2  Houston, Rodman
+038VH9483824                       MSCU          3        2  Houston, Rodman
+NAM9425886                         CMDU          3        2  Lagos, Lekki
+MEDUVZ931977                       MSCU          2        2  Gaziantep, Iskenderun
+40794974                           HLCU          2        2  Houston, Port Said
+038VH9367575                       MSCU          2        2  Guayaquil, Quito
+NAM9430111                         CMDU          2        2  Heredia, San Jose
+038VH9356835                       MSCU          2        2  Guayaquil, Quito
+NAM9437737                         CMDU          2        2  Guatemala City, Puerto Santo Tomas de Castilla
+MCB0293431                         CMDU          2        2  Ho Chi Minh City, Vung Tau
+038VH9354643A                      MSCU          2        2  Guayaquil, Quito
+038VH9338081                       MSCU          2        2  Puerto Barrios, Villa Nueva
+038VH9365762                       MSCU          2        2  Alexandria, El Dekheila
+038VH9354664                       MSCU          2        2  Guayaquil, Quito
+038VH9322127                       MSCU          2        2  Lourdes, Puerto Barrios
+HLCUBSC260226596                   HLCU          2        2  Houston, Port Said
+038VH9344734                       MSCU          2        2  Guayaquil, Quito
+MEDUWJ638883                       MSCU          2        2  Gioia Tauro, Iskenderun
+DMMA38766700                       HDMU          2        2  Phnom Penh, Sihanoukville
+HLCUBSC2602AURN3                   HLCU          2        2  Houston, Port Said
+038VH9392813                       MSCU          2        2  Limon, Moin
+17420008                           HLCU          2        2  Barranquilla, Buenaventura
+038VH9353022                       MSCU          2        2  Ho Chi Minh City, Thuan An
+NAM9427033                         CMDU          2        2  Guatemala City, Puerto Santo Tomas de Castilla
+038VH9351776                       MSCU          2        2  Caacupe-Mi, Villeta
+NAM9428430                         CMDU          2        2  Puerto Quetzal, Puerto Santo Tomas de Castilla
+038VH9390883                       MSCU          2        2  Guayaquil, Puerto Bolivar
+720602541                          MAEU          2        2  Izmir, King Abdullah City
+MEDURM053688                       MSCU          2        2  Alexandria, El Dekheila
+NAM9425761                         CMDU          2        2  Apapa, Lagos
+038VH9339543                       MSCU          2        2  Cristobal, Rodman
+HLCUBSC2602AVLZ8                   HLCU          2        2  Houston, Port Said
+NAM9437039                         CMDU          2        2  Guatemala City, Puerto Santo Tomas de Castilla
+MEDUOJ459058                       MSCU          2        2  Gebze, Yarimca
+NAM9423865                         CMDU          2        2  Pasir Gudang, Tanjung Pelepas
+038VH9483831                       MSCU          2        2  Houston, Rodman
+038VH9473944                       MSCU          2        2  Barcelona, Valencia
+038VH9318731A                      MSCU          2        2  Laem Chabang, Lat Krabang
+MEDUAD781343                       MSCU          2        2  Lome, Santa Cruz de Tenerife
+038VH9363161                       MSCU          2        2  Guayaquil, Quito
