@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Route: 263641182 / CAAU5231059</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  html,body{margin:0;padding:0;height:100%;font-family:Arial,sans-serif;background:#0d1f33;color:#cde;}
+  #header{padding:8px 16px;background:#0f2744;border-bottom:2px solid #2e5f8a;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+  #header h1{font-size:15px;color:#7eb8e6;margin:0;white-space:nowrap;}
+  #header span{font-size:11px;color:#aac8e0;}
+  #map{height:calc(100vh - 44px);}
+  .popup-box{font-size:12px;min-width:220px;line-height:1.6;}
+  .popup-title{font-weight:bold;font-size:13px;color:#1a3a6c;border-bottom:1px solid #ccc;padding-bottom:4px;margin-bottom:6px;}
+  .popup-row{display:flex;justify-content:space-between;gap:8px;}
+  .popup-label{color:#555;font-weight:bold;}
+  .popup-val{color:#222;text-align:right;}
+  .actual{color:#22aa55;font-weight:bold;}
+  .estimated{color:#cc8800;font-weight:bold;}
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>&#128230; 263641182 &nbsp;|&nbsp; CAAU5231059</h1>
+  <span id="hdr-info"></span>
+</div>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
+<script>
+const TRACK      = "263641182";
+const SEALINE    = "MAEU";
+const STATUS     = "IN_TRANSIT";
+const CONTAINERS = {"CAAU5231059": [{"seq": 1, "loc": "Houston Barbours Cut Terminal", "lat": 29.76328, "lng": -95.36327, "date": "2026-01-12 16:38", "actual": true, "desc": "Gate out Empty"}, {"seq": 2, "loc": "Tanger Med 2", "lat": 35.8568911, "lng": -5.534163, "date": "2026-01-14 15:08", "actual": true, "desc": "Gate in"}, {"seq": 3, "loc": "Tanger Med 2", "lat": 35.8568911, "lng": -5.534163, "date": "2026-01-17 01:38", "actual": true, "desc": "Load"}, {"seq": 4, "loc": "Tanger Med 2", "lat": 35.8568911, "lng": -5.534163, "date": "2026-01-19 05:24", "actual": true, "desc": "Vessel departure"}, {"seq": 5, "loc": "Port Tangier Mediterranee", "lat": 35.895, "lng": -5.4945, "date": "2026-02-10 07:00", "actual": false, "desc": "Vessel arrival"}, {"seq": 6, "loc": "Port Tangier Mediterranee", "lat": 35.895, "lng": -5.4945, "date": "2026-02-14 01:00", "actual": false, "desc": "Vessel departure"}, {"seq": 7, "loc": "MARPORT TERMINAL - AMBARLI", "lat": 37.2288376, "lng": 40.2773185, "date": "2026-02-14 03:00", "actual": false, "desc": "Vessel arrival"}, {"seq": 8, "loc": "MARPORT TERMINAL - AMBARLI", "lat": 37.2288376, "lng": 40.2773185, "date": "2026-02-17 21:00", "actual": false, "desc": "Vessel departure"}, {"seq": 9, "loc": "Bay Port Container Terminal", "lat": 29.6051733, "lng": -95.0060993, "date": "2026-03-01 00:01", "actual": false, "desc": "Vessel arrival"}]};
+
+document.getElementById('hdr-info').textContent =
+  SEALINE + ' • ' + STATUS;
+
+const map = L.map('map', {center: [34.798533533333334, -15.267357922222223], zoom: 3, preferCanvas: false});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 18}).addTo(map);
+
+const COLORS = ['#4ec9ff','#ff6b6b','#69ff47','#ffe119','#f58231','#b96ff5','#42d4f4','#f032e6'];
+let ci = 0;
+
+Object.entries(CONTAINERS).forEach(([cnum, events]) => {
+  const col = COLORS[ci++ % COLORS.length];
+  const pts = events.map(e => [e.lat, e.lng]);
+
+  if (pts.length > 1) {
+    L.polyline(pts, {color: col, weight: 3, opacity: 0.85}).addTo(map);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const seg = L.polyline([pts[i], pts[i+1]], {color: col, weight: 3, opacity: 0}).addTo(map);
+      L.polylineDecorator(seg, {
+        patterns: [{
+          offset: '50%', repeat: 0,
+          symbol: L.Symbol.arrowHead({
+            pixelSize: 14, polygon: false,
+            pathOptions: {color: col, fillOpacity: 1, weight: 2}
+          })
+        }]
+      }).addTo(map);
+    }
+  }
+
+  events.forEach((e, i) => {
+    const isFirst = i === 0, isLast = i === events.length - 1;
+    const marker = L.circleMarker([e.lat, e.lng], {
+      radius: isFirst || isLast ? 10 : 6,
+      fillColor: isFirst ? '#22dd66' : isLast ? '#ff4444' : col,
+      color: '#fff', weight: 2, opacity: 1,
+      fillOpacity: isFirst || isLast ? 1 : 0.85
+    }).addTo(map);
+
+    const badge = e.actual
+      ? '<span class="actual">&#10003; Actual</span>'
+      : '<span class="estimated">&#9711; Estimated</span>';
+
+    marker.bindPopup(
+      '<div class="popup-box">' +
+      '<div class="popup-title">&#128230; ' + TRACK + '</div>' +
+      '<div class="popup-row"><span class="popup-label">Container</span><span class="popup-val">' + cnum + '</span></div>' +
+      '<div class="popup-row"><span class="popup-label">Order ID</span><span class="popup-val">' + e.seq + '</span></div>' +
+      '<div class="popup-row"><span class="popup-label">Location</span><span class="popup-val">' + e.loc + '</span></div>' +
+      '<div class="popup-row"><span class="popup-label">Date</span><span class="popup-val">' + e.date + ' ' + badge + '</span></div>' +
+      '<div class="popup-row"><span class="popup-label">Event</span><span class="popup-val">' + e.desc + '</span></div>' +
+      '</div>'
+    );
+  });
+});
+
+const legend = L.control({position: 'bottomleft'});
+legend.onAdd = () => {
+  const d = L.DomUtil.create('div', '');
+  d.style.cssText = 'background:#0f2744;padding:8px 12px;border-radius:6px;border:1px solid #2e5f8a;font-size:11px;color:#cde;line-height:1.8;';
+  d.innerHTML = '<b style="color:#7eb8e6">Legend</b><br>' +
+    '<span style="color:#22dd66">&#9679;</span> Origin &nbsp;' +
+    '<span style="color:#ff4444">&#9679;</span> Destination<br>' +
+    '&#10230; Arrow = travel direction<br>' +
+    '<span style="color:#cc8800">&#9711;</span> = Estimated date';
+  return d;
+};
+legend.addTo(map);
+</script>
+</body>
+</html>

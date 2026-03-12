@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Destination Ports - Containers with ETA/ATA in Next 7 Days</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1b2a;
+    color: #c8d8e8;
+    font-family: 'Segoe UI', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+    min-height: 100vh;
+  }
+  .chart-container {
+    width: 100%;
+    max-width: 900px;
+    height: 420px;
+    background: #132032;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+  }
+</style>
+</head>
+<body>
+<div class="chart-container">
+  <canvas id="chart"></canvas>
+</div>
+<script>
+const cfg = {
+  "type": "doughnut",
+  "data": {
+    "labels": [
+      "Iskenderun",
+      "Chattogram",
+      "Apapa",
+      "Cartagena",
+      "Abidjan",
+      "Antwerp",
+      "Callao",
+      "Mersin",
+      "Haifa",
+      "Izmit",
+      "Other Ports"
+    ],
+    "datasets": [
+      {
+        "label": "Container Count",
+        "data": [
+          143,
+          61,
+          43,
+          43,
+          41,
+          38,
+          38,
+          37,
+          36,
+          36,
+          368
+        ],
+        "backgroundColor": [
+          "#4e9af1",
+          "#f16a4e",
+          "#4ef1a0",
+          "#f1d44e",
+          "#a04ef1",
+          "#4ef1e8",
+          "#f14e9a",
+          "#9af14e",
+          "#f1984e",
+          "#4e6af1",
+          "#e84ef1"
+        ],
+        "borderColor": "#1a2636",
+        "borderWidth": 2
+      }
+    ]
+  },
+  "options": {
+    "indexAxis": "x",
+    "responsive": true,
+    "maintainAspectRatio": false,
+    "plugins": {
+      "legend": {
+        "labels": {
+          "color": "#c8d8e8"
+        }
+      },
+      "title": {
+        "display": true,
+        "text": "Destination Ports - Containers with ETA/ATA in Next 7 Days",
+        "color": "#e0eaf4",
+        "font": {
+          "size": 16
+        }
+      }
+    }
+  }
+};
+new Chart(document.getElementById('chart'), cfg);
+</script>
+</body>
+</html>

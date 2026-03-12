@@ -1,11 +1,11 @@
 """
-api.py — REST API wrapper around the Sealine Claude agent.
+api.py — FastAPI REST interface for the Sealine Claude agent.
 
-Exposes the ClaudeChat agent (from claude_desktop.py) via HTTP endpoints,
+Exposes the ClaudeChat agent (from agent.py) via HTTP endpoints,
 allowing users to create chat sessions and send prompts over a REST API.
 
 Usage:
-    uvicorn api:app --reload --port 8000
+    uvicorn api:app --reload --port 8001
 
 Endpoints:
     POST   /sessions              — create a new chat session
@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from claude_desktop import ClaudeChat, load_md_files
+from agent import ClaudeChat, load_md_files
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -233,6 +233,24 @@ def delete_session(session_id: str):
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
     del sessions[session_id]
+
+
+# ── Generated files (maps, Excel reports, etc.) ───────────────────────────
+ALLOWED_FILE_EXTENSIONS = {".html", ".xlsx", ".csv", ".txt", ".png"}
+
+@app.get("/files/{filename}")
+def serve_generated_file(filename: str):
+    """Serve a generated file (HTML map, Excel report, etc.) from the project directory."""
+    # Security: no path traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_FILE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"File type '{ext}' not allowed")
+    path = os.path.join(SCRIPT_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"File '{filename}' not found")
+    return FileResponse(path)
 
 
 # ── Static files (must be last so API routes take priority) ───────────────

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>All Shipments with ETA/ATA within Next 7 Days - POD (Port of Discharge) Locations</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d1b2a; font-family: 'Segoe UI', sans-serif; }
+  #title-bar {
+    background: #132032;
+    color: #e0eaf4;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-bottom: 1px solid #1e3a5a;
+    letter-spacing: 0.03em;
+  }
+  #map { width: 100%; height: calc(100vh - 36px); }
+  .leaflet-popup-content-wrapper {
+    background: #132032; color: #c8d8e8;
+    border: 1px solid #1e3a5a; border-radius: 8px;
+  }
+  .leaflet-popup-tip { background: #132032; }
+</style>
+</head>
+<body>
+<div id="title-bar">All Shipments with ETA/ATA within Next 7 Days - POD (Port of Discharge) Locations</div>
+<div id="map"></div>
+<script>
+  const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &amp; CARTO', maxZoom: 18
+  }).addTo(map);
+
+  function pinIcon(color) {
+    return L.divIcon({
+      className: '',
+      html: `<svg width="22" height="30" viewBox="0 0 22 30" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="11" cy="28" rx="5" ry="2" fill="rgba(0,0,0,0.3)"/>
+        <path d="M11 0 C5 0 0 5 0 11 C0 19 11 30 11 30 C11 30 22 19 22 11 C22 5 17 0 11 0Z"
+              fill="${color}" stroke="#fff" stroke-width="1.5"/>
+        <circle cx="11" cy="11" r="4" fill="#fff" opacity="0.85"/>
+      </svg>`,
+      iconSize: [22, 30],
+      iconAnchor: [11, 30],
+      popupAnchor: [0, -30]
+    });
+  }
+
+  function addMarker(lat, lng, color, popup) {
+    L.marker([lat, lng], { icon: pinIcon(color) })
+      .bindPopup(popup, { maxWidth: 320 })
+      .addTo(map);
+  }
+
+  addMarker(10.34599, 107.08426, '#e74c3c', '<b>Vung Tau</b><br/>Vietnam<br/>6 shipments arriving 2026-03-12 to 2026-03-16');
+    addMarker(20.86481, 106.68345, '#e74c3c', '<b>Haiphong</b><br/>Vietnam<br/>5 shipments arriving 2026-03-13 to 2026-03-15');
+    addMarker(36.58718, 36.17347, '#f39c12', '<b>Iskenderun</b><br/>Turkey<br/>32 shipments arriving 2026-03-14 to 2026-03-19');
+    addMarker(-2.19616, -79.88621, '#3498db', '<b>Guayaquil</b><br/>Ecuador<br/>13 shipments arriving 2026-03-12 to 2026-03-14');
+    addMarker(10.39972, -75.51444, '#3498db', '<b>Cartagena</b><br/>Colombia<br/>26 shipments arriving 2026-03-13 to 2026-03-18');
+    addMarker(-12.05659, -77.11814, '#3498db', '<b>Callao</b><br/>Peru<br/>10 shipments arriving 2026-03-12 to 2026-03-19');
+    addMarker(41.01384, 28.94966, '#f39c12', '<b>Istanbul</b><br/>Turkey<br/>5 shipments arriving 2026-03-13 to 2026-03-18');
+    addMarker(40.80276, 29.43068, '#f39c12', '<b>Gebze</b><br/>Turkey<br/>1 shipment arriving 2026-03-15');
+    addMarker(33.58831, -7.61138, '#9b59b6', '<b>Casablanca</b><br/>Morocco<br/>3 shipments arriving 2026-03-12');
+    addMarker(22.75041, 113.57144, '#2ecc71', '<b>Nansha</b><br/>China<br/>1 shipment arriving 2026-03-19');
+    addMarker(36.81196, 34.63886, '#f39c12', '<b>Mersin</b><br/>Turkey<br/>10 shipments arriving 2026-03-15 to 2026-03-19');
+    addMarker(35.18147, 136.90641, '#2ecc71', '<b>Nagoya</b><br/>Japan<br/>3 shipments arriving 2026-03-18 to 2026-03-19');
+    addMarker(24.1469, 120.6839, '#2ecc71', '<b>Taichung</b><br/>Taiwan<br/>1 shipment arriving 2026-03-16');
+    addMarker(25.00255, 55.10811, '#1abc9c', '<b>Jebel Ali</b><br/>United Arab Emirates<br/>2 shipments arriving 2026-03-13 to 2026-03-18');
+    addMarker(-33.96109, 25.61494, '#34495e', '<b>Port Elizabeth</b><br/>South Africa<br/>2 shipments arriving 2026-03-14 to 2026-03-18');
+    addMarker(-5.83861, 13.46306, '#34495e', '<b>Matadi</b><br/>Democratic Republic of Congo<br/>1 shipment arriving 2026-03-16');
+    addMarker(40.633333, 22.95, '#f39c12', '<b>Thessaloniki</b><br/>Greece<br/>2 shipments arriving 2026-03-19');
+    addMarker(42.14272, 41.67384, '#f39c12', '<b>Poti</b><br/>Georgia<br/>3 shipments arriving 2026-03-14 to 2026-03-18');
+    addMarker(5.35444, -4.00167, '#34495e', '<b>Abidjan</b><br/>Ivory Coast<br/>6 shipments arriving 2026-03-13 to 2026-03-17');
+    addMarker(18.94977, 72.95083, '#2ecc71', '<b>Jawaharlal Nehru</b><br/>India<br/>1 shipment arriving 2026-03-18');
+    addMarker(51.96375, 1.3511, '#9b59b6', '<b>Felixstowe</b><br/>United Kingdom<br/>2 shipments arriving 2026-03-17 to 2026-03-19');
+    addMarker(-26.11694, -48.61611, '#3498db', '<b>Itapoa</b><br/>Brazil<br/>4 shipments arriving 2026-03-18');
+    addMarker(31.79213, 34.64966, '#1abc9c', '<b>Ashdod</b><br/>Israel<br/>4 shipments arriving 2026-03-12 to 2026-03-17');
+    addMarker(3.8801, -77.03116, '#3498db', '<b>Buenaventura</b><br/>Colombia<br/>2 shipments arriving 2026-03-16 to 2026-03-18');
+    addMarker(36.81897, 10.16579, '#34495e', '<b>Tunis</b><br/>Tunisia<br/>2 shipments arriving 2026-03-16 to 2026-03-18');
+    addMarker(15.72778, -88.59444, '#3498db', '<b>Puerto Barrios</b><br/>Guatemala<br/>6 shipments arriving 2026-03-15');
+    addMarker(-33.59473, -71.60746, '#3498db', '<b>San Antonio</b><br/>Chile<br/>3 shipments arriving 2026-03-14 to 2026-03-17');
+    addMarker(18.42632, -69.63126, '#3498db', '<b>Caucedo</b><br/>Dominican Republic<br/>5 shipments arriving 2026-03-12 to 2026-03-18');
+    addMarker(9.98981, -83.09308, '#3498db', '<b>Moin</b><br/>Costa Rica<br/>2 shipments arriving 2026-03-14 to 2026-03-18');
+    addMarker(6.4488, 3.35901, '#34495e', '<b>Apapa</b><br/>Nigeria<br/>5 shipments arriving 2026-03-12 to 2026-03-19');
+    addMarker(-37.814, 144.96332, '#2ecc71', '<b>Melbourne</b><br/>Australia<br/>1 shipment arriving 2026-03-13');
+    addMarker(5.6698, -0.01657, '#34495e', '<b>Tema</b><br/>Ghana<br/>4 shipments arriving 2026-03-12 to 2026-03-16');
+    addMarker(40.76499, 29.92928, '#f39c12', '<b>Izmit</b><br/>Turkey<br/>18 shipments arriving 2026-03-13 to 2026-03-18');
+    addMarker(32.81841, 34.9885, '#1abc9c', '<b>Haifa</b><br/>Israel<br/>2 shipments arriving 2026-03-12');
+    addMarker(31.366365, 121.61475, '#2ecc71', '<b>Shanghai</b><br/>China<br/>2 shipments arriving 2026-03-18');
+    addMarker(38.79975, 26.97203, '#f39c12', '<b>Aliaga</b><br/>Turkey<br/>2 shipments arriving 2026-03-17');
+    addMarker(51.22047, 4.40026, '#9b59b6', '<b>Antwerp</b><br/>Belgium<br/>5 shipments arriving 2026-03-14 to 2026-03-19');
+    addMarker(40.96667, 28.7, '#f39c12', '<b>Ambarli</b><br/>Turkey<br/>5 shipments arriving 2026-03-14 to 2026-03-18');
+    addMarker(38.41273, 27.13838, '#f39c12', '<b>Izmir</b><br/>Turkey<br/>2 shipments arriving 2026-03-17 to 2026-03-19');
+    addMarker(-34.90328, -56.18816, '#3498db', '<b>Montevideo</b><br/>Uruguay<br/>2 shipments arriving 2026-03-14');
+    addMarker(-4.05466, 39.66359, '#34495e', '<b>Mombasa</b><br/>Kenya<br/>1 shipment arriving 2026-03-16');
+    addMarker(-33.92584, 18.42322, '#34495e', '<b>Cape Town</b><br/>South Africa<br/>2 shipments arriving 2026-03-12 to 2026-03-13');
+    addMarker(-37.68611, 176.16667, '#2ecc71', '<b>Tauranga</b><br/>New Zealand<br/>1 shipment arriving 2026-03-12');
+    addMarker(-12.97111, -38.51083, '#3498db', '<b>Salvador</b><br/>Brazil<br/>1 shipment arriving 2026-03-12');
+    addMarker(10.47306, -68.0125, '#3498db', '<b>Puerto Cabello</b><br/>Venezuela<br/>5 shipments arriving 2026-03-17');
+    addMarker(10.60156, -66.93293, '#3498db', '<b>La Guaira</b><br/>Venezuela<br/>4 shipments arriving 2026-03-15 to 2026-03-19');
+    addMarker(-3.10194, -60.025, '#3498db', '<b>Manaus</b><br/>Brazil<br/>3 shipments arriving 2026-03-18 to 2026-03-19');
+    addMarker(35.895, -5.4945, '#9b59b6', '<b>Tanger Med</b><br/>Morocco<br/>1 shipment arriving 2026-03-13');
+    addMarker(5.4166667, 100.31666667, '#2ecc71', '<b>Penang</b><br/>Malaysia<br/>1 shipment arriving 2026-03-12');
+    addMarker(2.99903, 101.39141, '#2ecc71', '<b>Port Klang</b><br/>Malaysia<br/>2 shipments arriving 2026-03-17 to 2026-03-19');
+    addMarker(-6.13333, 106.83333, '#2ecc71', '<b>Jakarta</b><br/>Indonesia<br/>2 shipments arriving 2026-03-12');
+    addMarker(14.58346, 120.9693, '#2ecc71', '<b>Manila South Harbour</b><br/>Philippines<br/>2 shipments arriving 2026-03-16');
+    addMarker(-6.99306, 110.42083, '#2ecc71', '<b>Semarang</b><br/>Indonesia<br/>1 shipment arriving 2026-03-18');
+    addMarker(24.8608, 67.0104, '#2ecc71', '<b>Karachi</b><br/>Pakistan<br/>1 shipment arriving 2026-03-13');
+    addMarker(3.7755, 98.6832, '#2ecc71', '<b>Belawan</b><br/>Indonesia<br/>1 shipment arriving 2026-03-16');
+    addMarker(10.82302, 106.62965, '#e74c3c', '<b>Ho Chi Minh City</b><br/>Vietnam<br/>1 shipment arriving 2026-03-18');
+    addMarker(29.87819, 121.54945, '#2ecc71', '<b>Ningbo</b><br/>China<br/>1 shipment arriving 2026-03-16');
+    addMarker(36.06488, 120.38042, '#2ecc71', '<b>Qingdao</b><br/>China<br/>2 shipments arriving 2026-03-19');
+    addMarker(10.51393, 107.01628, '#e74c3c', '<b>Cai Mep International Terminal</b><br/>Vietnam<br/>3 shipments arriving 2026-03-15 to 2026-03-16');
+    addMarker(16.80528, 96.15611, '#2ecc71', '<b>Yangon</b><br/>Myanmar<br/>1 shipment arriving 2026-03-15');
+    addMarker(44.40478, 8.94439, '#9b59b6', '<b>Genova</b><br/>Italy<br/>3 shipments arriving 2026-03-12 to 2026-03-18');
+    addMarker(14.6937, -17.44406, '#34495e', '<b>Dakar</b><br/>Senegal<br/>2 shipments arriving 2026-03-15 to 2026-03-18');
+    addMarker(22.3384, 91.83168, '#2ecc71', '<b>Chattogram</b><br/>Bangladesh<br/>6 shipments arriving 2026-03-17');
+    addMarker(6.1333333, -10.7969, '#34495e', '<b>Monrovia</b><br/>Liberia<br/>1 shipment arriving 2026-03-19');
+    addMarker(51.51309, 0.48366, '#9b59b6', '<b>London Gateway Port</b><br/>United Kingdom<br/>1 shipment arriving 2026-03-14');
+    addMarker(26.43442, 50.10326, '#1abc9c', '<b>Dammam</b><br/>Saudi Arabia<br/>1 shipment arriving 2026-03-15');
+    addMarker(11.58901, 43.14503, '#1abc9c', '<b>Djibouti</b><br/>Djibouti<br/>1 shipment arriving 2026-03-19');
+    addMarker(-12.74083, -38.62083, '#3498db', '<b>Suape</b><br/>Brazil<br/>2 shipments arriving 2026-03-15');
+    addMarker(8.94814, -79.56672, '#3498db', '<b>Balboa</b><br/>Panama<br/>1 shipment arriving 2026-03-14');
+    addMarker(2.99959, 101.39287, '#2ecc71', '<b>Pelabuhan Klang</b><br/>Malaysia<br/>2 shipments arriving 2026-03-18 to 2026-03-19');
+    addMarker(-29.8579, 31.0292, '#34495e', '<b>Durban</b><br/>South Africa<br/>1 shipment arriving 2026-03-12');
+    addMarker(-32.07081, -52.17553, '#3498db', '<b>Rio Grande</b><br/>Brazil<br/>1 shipment arriving 2026-03-18');
+    addMarker(15.69668, -88.61651, '#3498db', '<b>Puerto Santo Tomas de Castilla</b><br/>Guatemala<br/>3 shipments arriving 2026-03-18');
+    addMarker(-33.036, -71.62963, '#3498db', '<b>Valparaiso</b><br/>Chile<br/>1 shipment arriving 2026-03-17');
+    addMarker(-23.96083, -46.33361, '#3498db', '<b>Santos</b><br/>Brazil<br/>2 shipments arriving 2026-03-12');
+    addMarker(-22.90642, -43.18223, '#3498db', '<b>Rio de Janeiro</b><br/>Brazil<br/>1 shipment arriving 2026-03-14');
+    addMarker(15.82562, -87.92968, '#3498db', '<b>Puerto Cortez</b><br/>Honduras<br/>1 shipment arriving 2026-03-17');
+    addMarker(-54.81084, -68.31591, '#3498db', '<b>Ushuaia</b><br/>Argentina<br/>1 shipment arriving 2026-03-15');
+</script>
+</body>
+</html>
