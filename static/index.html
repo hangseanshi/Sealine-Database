@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sealine Agent</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <!-- Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Code syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+    <!-- XSS protection for rendered markdown -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar -->
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <button id="new-chat-btn">+ New Chat</button>
+            </div>
+            <div id="conversation-list"></div>
+        </aside>
+
+        <!-- Sidebar overlay for mobile -->
+        <div id="sidebar-overlay"></div>
+
+        <!-- Main chat area -->
+        <main id="chat-area">
+            <!-- Top bar (mobile hamburger) -->
+            <div id="top-bar">
+                <button id="menu-btn" title="Toggle sidebar">&#9776;</button>
+                <span id="top-bar-title">Sealine Agent</span>
+            </div>
+
+            <!-- Welcome screen -->
+            <div id="welcome-screen">
+                <div class="welcome-content">
+                    <div class="welcome-icon">&#9973;</div>
+                    <h1>Sealine Agent</h1>
+                    <p>Ask questions about the Sealine shipping database</p>
+                    <div id="starter-prompts">
+                        <button class="starter" data-prompt="How many shipments are currently in transit?">
+                            How many shipments are currently in transit?
+                        </button>
+                        <button class="starter" data-prompt="Show me the top 10 carriers by shipment count">
+                            Show me the top 10 carriers by shipment count
+                        </button>
+                        <button class="starter" data-prompt="List all containers arriving this week">
+                            List all containers arriving this week
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Messages container -->
+            <div id="messages"></div>
+
+            <!-- Input area -->
+            <div id="input-area">
+                <div id="input-wrapper">
+                    <textarea id="message-input"
+                              placeholder="Message Sealine Agent..."
+                              rows="1"></textarea>
+                    <button id="send-btn" disabled title="Send message">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 2L11 13"></path>
+                            <path d="M22 2L15 22L11 13L2 9L22 2Z"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div id="input-footer">Sealine Agent can make mistakes. Verify important data.</div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -12,8 +12,8 @@ Usage:
     python claude_desktop.py --no-docs     # skip MD loading
 
 Requirements:
-    pip install anthropic httpx pyodbc
-    Set ANTHROPIC_API_KEY environment variable.
+    pip install anthropic httpx pyodbc python-dotenv
+    Set ANTHROPIC_API_KEY environment variable or create .env file.
 """
 
 import os
@@ -23,6 +23,10 @@ import argparse
 import textwrap
 import httpx
 import anthropic
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 try:
     import pyodbc

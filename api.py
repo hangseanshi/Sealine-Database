@@ -19,10 +19,16 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from claude_desktop import ClaudeChat, load_md_files
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -122,6 +128,13 @@ app = FastAPI(
 )
 
 
+# ── Frontend ──────────────────────────────────────────────────────────────
+@app.get("/")
+def serve_frontend():
+    """Serve the chat interface."""
+    return FileResponse(os.path.join(SCRIPT_DIR, "static", "index.html"))
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.post("/sessions", response_model=CreateSessionResponse, status_code=201)
 def create_session(req: CreateSessionRequest = None):
@@ -219,3 +232,7 @@ def delete_session(session_id: str):
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
     del sessions[session_id]
+
+
+# ── Static files (must be last so API routes take priority) ───────────────
+app.mount("/static", StaticFiles(directory=os.path.join(SCRIPT_DIR, "static")), name="static")
