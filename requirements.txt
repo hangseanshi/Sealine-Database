@@ -1,0 +1,5 @@
+anthropic
+httpx
+pyodbc
+fastapi
+uvicorn[standard]

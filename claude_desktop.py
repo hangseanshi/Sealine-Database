@@ -239,6 +239,58 @@ class ClaudeChat:
             return result
         return f"Unknown tool: {name}"
 
+    # ── Send (API — returns response text) ──────────────────────────────────
+    def send_api(self, user_text: str) -> str:
+        """Non-streaming send that returns the full response text. Used by the REST API."""
+        self.messages.append({"role": "user", "content": user_text})
+        tools = [SQL_TOOL] if self.db_enabled else []
+
+        while True:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=self._system_blocks(),
+                tools=tools,
+                messages=self.messages,
+            )
+
+            self.total_input_tokens  += response.usage.input_tokens
+            self.total_output_tokens += response.usage.output_tokens
+            cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+            if cache_read:
+                self.cache_hits += 1
+
+            self.messages.append({"role": "assistant", "content": response.content})
+
+            if response.stop_reason == "tool_use":
+                tool_results = []
+                for block in response.content:
+                    if block.type == "tool_use":
+                        result_text = self._execute_tool_silent(block.name, block.input)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result_text,
+                        })
+                self.messages.append({"role": "user", "content": tool_results})
+                continue
+
+            # Extract text from response
+            parts = []
+            for block in response.content:
+                if block.type == "text":
+                    parts.append(block.text)
+            return "\n".join(parts)
+
+    def _execute_tool_silent(self, name: str, tool_input: dict) -> str:
+        """Execute tool without terminal output (for API use)."""
+        if name == "execute_sql":
+            query = tool_input.get("query", "")
+            result = run_sql(query)
+            self.sql_calls += 1
+            return result
+        return f"Unknown tool: {name}"
+
     # ── Send (agentic loop with streaming) ────────────────────────────────────
     def send(self, user_text: str) -> None:
         self.messages.append({"role": "user", "content": user_text})
