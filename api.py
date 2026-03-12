@@ -27,11 +27,12 @@ from pydantic import BaseModel, Field
 
 from claude_desktop import ClaudeChat, load_md_files
 
-# Load environment variables from .env file
-load_dotenv()
-
 # ── Configuration ─────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Load environment variables from .env in the same directory as this script
+# (explicit path ensures it works regardless of the process working directory)
+load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
 
 DEFAULT_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5")
 DEFAULT_MAX_TOKENS = int(os.environ.get("CLAUDE_MAX_TOKENS", "8192"))

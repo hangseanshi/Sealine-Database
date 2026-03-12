@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "api-server",
-      "runtimeExecutable": "uvicorn",
-      "runtimeArgs": ["api:app", "--reload", "--port", "8001"],
+      "name": "sealine-api",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "api:app", "--reload", "--port", "8001"],
       "port": 8001
     }
   ]
