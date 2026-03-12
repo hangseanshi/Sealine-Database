@@ -42,36 +42,47 @@ GENERATE_PLOT_TOOL: dict[str, Any] = {
     "name": "generate_plot",
     "description": (
         "Generate a chart or plot from data. Supports bar, line, scatter, pie, "
-        "and heatmap chart types. Use matplotlib for static charts or plotly for "
-        "interactive charts."
+        "heatmap, histogram, and map (interactive geographic map with OpenStreetMap "
+        "tiles) chart types. ALWAYS use plot_type='map' with interactive=true when "
+        "displaying geographic/location data with latitude and longitude coordinates. "
+        "Use matplotlib for static charts or plotly for interactive charts."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "plot_type": {
                 "type": "string",
-                "enum": ["bar", "line", "scatter", "pie", "heatmap", "histogram"],
+                "enum": ["bar", "line", "scatter", "pie", "heatmap", "histogram", "map"],
+                "description": (
+                    "Chart type. Use 'map' for any geographic/location data with "
+                    "lat/lon coordinates — it renders an interactive OpenStreetMap. "
+                    "Other types: bar, line, scatter, pie, heatmap, histogram."
+                ),
             },
             "title": {"type": "string", "description": "Chart title."},
             "data": {
                 "type": "object",
                 "description": (
-                    "Chart data as JSON. For bar/line/histogram: "
-                    '{"labels": [...], "values": [...]}. '
+                    "Chart data as JSON. "
+                    'For bar/line/histogram: {"labels": [...], "values": [...]}. '
                     'For scatter: {"x": [...], "y": [...]}. '
                     'For pie: {"labels": [...], "values": [...]}. '
-                    'For heatmap: {"labels_x": [...], "labels_y": [...], "values": [[...]]}'
+                    'For heatmap: {"labels_x": [...], "labels_y": [...], "values": [[...]]}. '
+                    'For map: {"lat": [...], "lon": [...], "labels": [...], '
+                    '"values": [...]} where labels are hover text (e.g. container ID) '
+                    'and values are optional numeric values shown on hover.'
                 ),
             },
             "interactive": {
                 "type": "boolean",
                 "description": (
-                    "If true, generate Plotly HTML. If false, generate matplotlib PNG."
+                    "If true, generate Plotly HTML (required for map type). "
+                    "If false, generate matplotlib PNG."
                 ),
                 "default": False,
             },
-            "x_label": {"type": "string", "description": "X-axis label (optional)."},
-            "y_label": {"type": "string", "description": "Y-axis label (optional)."},
+            "x_label": {"type": "string", "description": "X-axis label (optional, not used for map)."},
+            "y_label": {"type": "string", "description": "Y-axis label (optional, not used for map)."},
         },
         "required": ["plot_type", "title", "data"],
     },
@@ -384,6 +395,82 @@ def _plot_interactive(
         fig = go.Figure(
             data=[go.Histogram(x=values, marker_color=HEADER_COLOR_HEX)]
         )
+
+    elif plot_type == "map":
+        lats = data.get("lat", [])
+        lons = data.get("lon", [])
+        map_labels = data.get("labels", [str(i) for i in range(len(lats))])
+        map_values = data.get("values", [])
+
+        # Build hover text: label + value if values provided
+        if map_values and len(map_values) == len(lats):
+            hover_text = [
+                f"{lbl}<br>{val}" for lbl, val in zip(map_labels, map_values)
+            ]
+        else:
+            hover_text = list(map_labels)
+
+        # Colour points by value if provided, otherwise use a flat colour
+        marker_cfg: dict[str, Any] = {"size": 10}
+        if map_values and len(map_values) == len(lats):
+            marker_cfg.update({
+                "color": map_values,
+                "colorscale": "Viridis",
+                "showscale": True,
+                "colorbar": {"title": "Value"},
+                "opacity": 0.85,
+            })
+        else:
+            marker_cfg.update({"color": HEADER_COLOR_HEX, "opacity": 0.85})
+
+        fig = go.Figure(
+            data=[
+                go.Scattermapbox(
+                    lat=lats,
+                    lon=lons,
+                    mode="markers",
+                    marker=go.scattermapbox.Marker(**marker_cfg),
+                    text=hover_text,
+                    hoverinfo="text",
+                )
+            ]
+        )
+
+        # Auto-centre on the data's centroid; fall back if lists are empty
+        center_lat = (sum(lats) / len(lats)) if lats else 20.0
+        center_lon = (sum(lons) / len(lons)) if lons else 0.0
+
+        # Pick zoom based on spread
+        if lats:
+            lat_range = max(lats) - min(lats)
+            lon_range = max(lons) - min(lons)
+            spread = max(lat_range, lon_range)
+            if spread < 2:
+                zoom = 8
+            elif spread < 10:
+                zoom = 5
+            elif spread < 40:
+                zoom = 3
+            else:
+                zoom = 1
+        else:
+            zoom = 2
+
+        fig.update_layout(
+            title=dict(text=title, font=dict(size=16)),
+            mapbox=dict(
+                style="open-street-map",   # free tiles, no token required
+                center=dict(lat=center_lat, lon=center_lon),
+                zoom=zoom,
+            ),
+            margin=dict(l=0, r=0, t=50, b=0),
+            height=550,
+        )
+
+        filename = f"{file_id}_{title_slug}.html"
+        full_path = os.path.join(file_store_path, filename)
+        fig.write_html(full_path, include_plotlyjs=True)
+        return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
 
     else:
         return {"error": f"Unsupported plot_type: {plot_type}"}

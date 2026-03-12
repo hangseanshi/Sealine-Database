@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sealine-api",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "flask", "--app", "server.app", "run", "--debug", "--port", "8080"],
+      "port": 8080
+    }
+  ]
+}

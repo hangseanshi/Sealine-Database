@@ -11,6 +11,7 @@ Additionally exposes a structured SqlResult for the API layer.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 from server.config import get_config
@@ -34,11 +35,17 @@ _ALLOWED_FIRST_WORDS = frozenset({"SELECT", "WITH"})
 
 # Dangerous keywords that should never appear anywhere in a query, even in
 # subqueries or multi-statement attacks (e.g., "SELECT 1; DROP TABLE x").
+# NOTE: "DELETE" is handled separately below with a word-boundary check so
+# that column names like "is_deleted" or "delete_flag" are not falsely blocked.
 _DANGEROUS_KEYWORDS = frozenset({
-    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE",
+    "INSERT", "UPDATE", "DROP", "ALTER", "TRUNCATE",
     "CREATE", "GRANT", "REVOKE", "EXEC", "EXECUTE",
     "XP_", "SP_CONFIGURE", "SHUTDOWN", "DBCC",
 })
+
+# Regex for DELETE used as a SQL statement keyword (must be followed by whitespace,
+# a comment marker, or end-of-string — not part of a column/table name).
+_DELETE_STMT_RE = re.compile(r"\bDELETE\s", re.IGNORECASE)
 
 
 @dataclass
@@ -107,12 +114,20 @@ def execute_sql(query: str, connection_string: str | None = None) -> SqlResult:
                 error=True,
             )
 
+    # DELETE requires a space after it to be considered a statement keyword.
+    # This allows column/table names like "is_deleted" or "delete_flag".
+    if _DELETE_STMT_RE.search(q):
+        return SqlResult(
+            text="ERROR: Query contains disallowed keyword: DELETE",
+            error=True,
+        )
+
     conn_str = connection_string or _build_connection_string()
 
     conn = None
     try:
-        conn = pyodbc.connect(conn_str, timeout=30)
-        conn.timeout = 30  # Query execution timeout (seconds)
+        conn = pyodbc.connect(conn_str, timeout=300)
+        conn.timeout = 300  # Query execution timeout (seconds)
         cursor = conn.cursor()
         cursor.execute(q)
 

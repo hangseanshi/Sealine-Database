@@ -285,6 +285,61 @@ body {
   line-height: 1.6;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  position: relative; /* anchor for absolute copy button */
+}
+
+/* ── Copy button base ─────────────────────────────────────────────────────── */
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.copy-btn:hover {
+  background: rgba(0, 0, 0, 0.07);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--text-dark);
+}
+.copy-btn.copied {
+  color: var(--success-green);
+  border-color: var(--success-green);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+/* ── Message bubble copy button — top-right corner, fades in on hover ─────── */
+.message-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+}
+.message-bubble:hover .message-copy-btn {
+  opacity: 1;
+}
+/* On user bubbles the icon should be light to contrast with the dark background */
+.message-bubble.user .message-copy-btn {
+  color: rgba(255, 255, 255, 0.6);
+}
+.message-bubble.user .message-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+
+/* ── Input bar copy button ────────────────────────────────────────────────── */
+.input-copy-btn {
+  flex-shrink: 0;
+  margin-bottom: 1px; /* align with send button baseline */
 }
 
 .message-bubble.user {
@@ -505,6 +560,28 @@ body {
   color: var(--text-dark);
 }
 
+.sql-query-text {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0 0 12px 0;
+}
+
+.sql-query-text code {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  padding: 0;
+}
+
 /* --- File Badge --- */
 .file-badge {
   display: flex;
@@ -565,10 +642,117 @@ body {
   background: var(--primary-blue-light);
 }
 
-/* --- Inline Plot --- */
+/* --- Artifact Embed (unified: image / iframe / download) --- */
+.artifact-embed {
+  margin: 8px 0;
+  max-width: 90%;
+}
+
+/* PNG / image */
+.artifact-image img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  display: block;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.artifact-image img:hover {
+  transform: scale(1.01);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.artifact-caption {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+/* HTML / PDF iframe wrapper */
+.artifact-iframe-wrapper {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-white);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.artifact-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f8f9fa;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+}
+
+.artifact-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+.artifact-name {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text-dark);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.artifact-toggle-btn {
+  padding: 3px 10px;
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-family: var(--font-family);
+  transition: background 0.15s ease;
+}
+
+.artifact-toggle-btn:hover {
+  background: #eef0f2;
+  color: var(--text-dark);
+}
+
+.artifact-newtab-btn {
+  padding: 3px 10px;
+  background: var(--primary-blue);
+  color: var(--text-light);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  text-decoration: none;
+  font-family: var(--font-family);
+  transition: background 0.15s ease;
+}
+
+.artifact-newtab-btn:hover {
+  background: var(--primary-blue-light);
+}
+
+.artifact-iframe {
+  display: block;
+  width: 100%;
+  border: none;
+  background: #fff;
+}
+
+/* Keep old inline-plot for backward compatibility */
 .inline-plot {
   margin: 8px 0;
-  max-width: 80%;
+  max-width: 90%;
 }
 
 .inline-plot img {
@@ -843,7 +1027,8 @@ body {
 
   .sql-block,
   .file-badge,
-  .inline-plot {
-    max-width: 90%;
+  .inline-plot,
+  .artifact-embed {
+    max-width: 95%;
   }
 }

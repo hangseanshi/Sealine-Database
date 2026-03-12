@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, memo } from 'react';
+import CopyButton from './CopyButton';
 
 /**
  * InputBar component.
@@ -69,6 +70,13 @@ function InputBar({ onSend, isLoading, disabled }) {
         disabled={isDisabled}
         rows={1}
       />
+      {text && (
+        <CopyButton
+          getText={text}
+          className="input-copy-btn"
+          title="Copy input text"
+        />
+      )}
       <button
         className="send-btn"
         onClick={handleSend}

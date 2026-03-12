@@ -59,16 +59,28 @@ export default function App() {
         prev.map((s) => {
           if (s.id !== sessionId) return s;
           const messages = [...s.messages];
-          // Find the last agent message and append delta
+
+          // Find the last streaming agent message
+          let lastAgentIdx = -1;
           for (let i = messages.length - 1; i >= 0; i--) {
             if (messages[i].type === 'agent' && messages[i].isStreaming) {
-              messages[i] = {
-                ...messages[i],
-                text: messages[i].text + delta,
-              };
+              lastAgentIdx = i;
               break;
             }
           }
+
+          // If the last streaming agent bubble is already the tail message,
+          // just append. Otherwise (a SQL block or artifact was added after it),
+          // start a new agent bubble so text appears sequentially after the tool.
+          if (lastAgentIdx !== -1 && lastAgentIdx === messages.length - 1) {
+            messages[lastAgentIdx] = {
+              ...messages[lastAgentIdx],
+              text: messages[lastAgentIdx].text + delta,
+            };
+          } else {
+            messages.push({ id: getNextId(), type: 'agent', text: delta, isStreaming: true });
+          }
+
           return { ...s, messages };
         })
       );
@@ -98,6 +110,11 @@ export default function App() {
     }, []),
 
     onToolStart: useCallback(({ tool, query }) => {
+      // Only show the SQL block for execute_sql — file-generation tools
+      // (generate_plot, generate_excel, generate_pdf) emit file/plot events
+      // instead of tool_result, so they would get stuck as "Running...".
+      if (tool !== 'execute_sql') return;
+
       const sessionId = activeSessionRef.current;
       if (!sessionId) return;
 
@@ -216,17 +233,18 @@ export default function App() {
       const sessionId = activeSessionRef.current;
       if (!sessionId) return;
 
-      // Mark the last agent message as no longer streaming
+      // Mark ALL streaming agent messages as done, and remove any that ended
+      // up empty (e.g. the initial placeholder if the agent started with a tool).
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id !== sessionId) return s;
-          const messages = [...s.messages];
-          for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i].type === 'agent' && messages[i].isStreaming) {
-              messages[i] = { ...messages[i], isStreaming: false };
-              break;
-            }
-          }
+          const messages = s.messages
+            .map((msg) =>
+              msg.type === 'agent' && msg.isStreaming
+                ? { ...msg, isStreaming: false }
+                : msg
+            )
+            .filter((msg) => !(msg.type === 'agent' && !msg.text));
           return { ...s, messages };
         })
       );

@@ -88,38 +88,104 @@ All containers belonging to a shipment. Child of Sealine_Header via TrackNumber 
 | DeletedDt | datetime | Soft delete |
 
 ### Sealine_Container_Event
-Container-level tracking events.
+Container-level tracking events. **⭐ AUTHORITATIVE SOURCE FOR CONTAINER ROUTES.**
+Use this table (not Sealine_Route) when querying a tracking number's full route — all stops, transshipments, arrivals, and departures are recorded here per container.
+
 | Column | Type | Notes |
 |--------|------|-------|
 | TrackNumber | varchar(100) NOT NULL | |
 | Sealine_Code / RequestType / Type | varchar | |
 | Container_NUMBER | varchar(100) NOT NULL | |
-| Order_id | varchar(100) NOT NULL | |
-| Location / Facility | varchar(100) | |
-| Description | varchar(100) | Event description |
+| Order_id | varchar(100) NOT NULL | Chronological sequence — ORDER BY TRY_CAST(Order_Id AS INT) ASC |
+| Location / Facility | varchar(100) | FK → Sealine_Locations.Id / Sealine_Facilities.Id (same TrackNumber). **Facility = physical terminal (preferred); Location = general route stop (fallback when Facility is NULL)** |
+| Description | varchar(100) | Event description (e.g. "Export Loaded on Vessel") |
 | Event_type / Event_Code | varchar(100) | |
 | Status | varchar(100) | |
 | Date | datetime | Event date |
-| Actual | int | 1=actual, 0=estimated |
+| Actual | int | 1=confirmed actual date, 0=estimated/future |
 | Is_Additional_Event | int | |
 | Transport_Type | varchar(100) | |
 | Vessel / Voyage | varchar(100) | |
 | CreatedOn / UpdatedDT / DeletedDt | datetime | |
 
+**Location priority rule:**
+- If `Facility` is populated → join `Sealine_Facilities` on `Facility = Id` → use `f.name` as the physical location
+- If `Facility` is NULL → join `Sealine_Locations` on `Location = Id` → use `l.Name` as the fallback location
+- Always use `COALESCE(f.name, l.Name)` to implement this automatically
+
+**Route query pattern:**
+```sql
+SELECT e.Container_NUMBER, e.Date, e.Actual,
+       COALESCE(f.name, l.Name) AS Location,   -- Facility (physical terminal) takes priority over Location (general stop)
+       e.Description
+FROM Sealine_Container_Event e
+LEFT JOIN Sealine_Facilities f ON e.TrackNumber = f.TrackNumber AND e.Facility = f.Id AND f.DeletedDt IS NULL
+LEFT JOIN Sealine_Locations  l ON e.TrackNumber = l.TrackNumber AND e.Location = l.Id AND l.DeletedDt IS NULL
+WHERE e.TrackNumber = '<track>'
+  AND e.DeletedDt IS NULL
+ORDER BY e.Container_NUMBER, TRY_CAST(e.Order_Id AS INT)
+```
+
 > Archive copies: Sealine_Container_Event_02May2025, Sealine_Container_Event_All, Sealine_Container_Event_Revised, Sealine_Container_Event_Revised_28APR2025
 
 ### Sealine_Route
-Scheduled/actual route dates per location stop.
+Scheduled/actual ETD/ETA dates per route stop. **Not a full stop-by-stop route — use Sealine_Container_Event for the complete container route.**
+
 | Column | Type | Notes |
 |--------|------|-------|
 | TrackNumber | varchar(100) NOT NULL | FK → Sealine_Header |
 | Type / Sealine_Code | varchar | |
-| RouteType | varchar(100) NOT NULL | e.g. ETD, ETA, ATD, ATA |
-| Location_Id | int | |
-| Date | datetime | |
-| IsActual | int | 1=actual, 0=planned |
+| RouteType | varchar(100) NOT NULL | Stop role — see values below |
+| Location_Id | int | FK → Sealine_Locations.Id (same TrackNumber) |
+| Date | datetime | ETD or ETA date for this stop |
+| IsActual | int | 1=actual date, 0=planned/estimated |
 | Predictive_ETA | varchar(100) | |
 | CreatedOn / UpdatedDT / DeletedDt | datetime | |
+
+**RouteType values:**
+| RouteType | Meaning |
+|-----------|---------|
+| `Pre-Pol` | Stop **before** the Port of Loading (origin inland/feeder stop) |
+| `Pol` | **Port of Loading** — the place where cargo is loaded onto the main vessel |
+| `Pod` | **Port of Discharge** — the destination port where cargo is unloaded |
+| `Post-Pod` | Stop **after** the Port of Discharge (destination inland/feeder stop) |
+
+**Date interpretation — RouteType × IsActual:**
+| RouteType | IsActual | Shipping Term | Meaning |
+|-----------|----------|---------------|---------|
+| `Pol` | 0 | **ETD** | Estimated Time of Departure |
+| `Pol` | 1 | **ATD** | Actual Time of Departure |
+| `Pod` | 0 | **ETA** | Estimated Time of Arrival |
+| `Pod` | 1 | **ATA** | Actual Time of Arrival |
+| `Pre-Pol` | 0/1 | Estimated/Actual departure from origin feeder stop |
+| `Post-Pod` | 0/1 | Estimated/Actual arrival at destination feeder stop |
+
+```sql
+-- Derive shipping term label from RouteType + IsActual
+CASE
+    WHEN r.RouteType = 'Pol' AND r.IsActual = 0 THEN 'ETD'
+    WHEN r.RouteType = 'Pol' AND r.IsActual = 1 THEN 'ATD'
+    WHEN r.RouteType = 'Pod' AND r.IsActual = 0 THEN 'ETA'
+    WHEN r.RouteType = 'Pod' AND r.IsActual = 1 THEN 'ATA'
+    ELSE r.RouteType + CASE WHEN r.IsActual = 1 THEN ' (Actual)' ELSE ' (Estimated)' END
+END AS DateLabel
+```
+
+**Join pattern to get location name:**
+```sql
+SELECT r.RouteType, r.Date, r.IsActual, l.Name, l.LOCode, l.Country
+FROM Sealine_Route r
+LEFT JOIN Sealine_Locations l
+    ON r.TrackNumber = l.TrackNumber AND r.Location_Id = l.Id AND l.DeletedDt IS NULL
+WHERE r.TrackNumber = '<track>'
+  AND r.DeletedDt IS NULL
+ORDER BY CASE r.RouteType
+    WHEN 'Pre-Pol'  THEN 1
+    WHEN 'Pol'      THEN 2
+    WHEN 'Pod'      THEN 3
+    WHEN 'Post-Pod' THEN 4
+    ELSE 5 END
+```
 
 ### Sealine_Facilities
 Port/terminal facilities per shipment.

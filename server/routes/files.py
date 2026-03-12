@@ -91,9 +91,9 @@ def download_file(file_id: str):
     ext = os.path.splitext(fr.filename)[1].lower()
     mime_type = _MIME_TYPES.get(ext) or fr.file_type or "application/octet-stream"
 
-    # Images are served inline so the frontend can display them directly in
-    # the chat.  Everything else is served as an attachment (download).
-    as_attachment = ext not in (".png", ".jpg", ".jpeg", ".html")
+    # Serve images, HTML, and PDF inline so the browser/iframe can render them.
+    # Excel and CSV are served as attachments (download only — not embeddable).
+    as_attachment = ext in (".xlsx", ".xls", ".csv")
 
     logger.debug(
         "Serving file %s (%s) mime=%s attachment=%s",

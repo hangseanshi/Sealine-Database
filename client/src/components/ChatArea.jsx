@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import MessageBubble from './MessageBubble';
 import SqlBlock from './SqlBlock';
-import FileBadge from './FileBadge';
-import InlinePlot from './InlinePlot';
+import ArtifactEmbed from './ArtifactEmbed';
 
 /**
  * ChatArea component.
@@ -89,24 +88,16 @@ export default function ChatArea({ session, isStreaming }) {
               );
 
             case 'file':
+            case 'plot':
               return (
-                <FileBadge
+                <ArtifactEmbed
                   key={msg.id ?? idx}
                   fileId={msg.fileId}
                   filename={msg.filename}
                   fileType={msg.fileType}
+                  url={msg.url}
                   downloadUrl={msg.downloadUrl}
                   sizeBytes={msg.sizeBytes}
-                />
-              );
-
-            case 'plot':
-              return (
-                <InlinePlot
-                  key={msg.id ?? idx}
-                  fileId={msg.fileId}
-                  filename={msg.filename}
-                  url={msg.url}
                 />
               );
 

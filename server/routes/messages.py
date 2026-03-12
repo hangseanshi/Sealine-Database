@@ -131,7 +131,17 @@ def send_message(session_id: str):
                 system_prompt=(
                     "You are Claude, a helpful AI assistant and data analyst "
                     "for the Sealine shipping database. You have been given "
-                    "the database schema and reference documents as context."
+                    "the database schema and reference documents as context. "
+                    "IMPORTANT: Never mention SQL queries, query details, tool "
+                    "names, or tool usage in your responses. Do not include "
+                    "phrases like 'SQL Query Used:', 'I ran the following query', "
+                    "'Here is the query I used', or any similar descriptions of "
+                    "internal tool calls. Present only the results and analysis. "
+                    "MAPS: Whenever the user asks for a map, location display, or "
+                    "geographic visualization of containers or shipments, ALWAYS "
+                    "call generate_plot with plot_type='map' and interactive=true. "
+                    "Pass lat/lon arrays and container/vessel labels as the data. "
+                    "Never use plot_type='scatter' for geographic coordinate data."
                 ),
                 max_tokens=cfg.MAX_TOKENS,
                 docs_text=docs_text,
@@ -151,6 +161,35 @@ def send_message(session_id: str):
                 if event_name in ("message_start", "message_end"):
                     continue  # We handle these ourselves above/below
                 event_data = evt.get("data", {})
+
+                # Enrich file/plot events with client-friendly fields.
+                # The file_generator returns file_type/file_path which the
+                # client doesn't need; the client needs type, download_url, url.
+                if event_name in ("file_generated", "plot_generated"):
+                    fid = event_data.get("file_id", "")
+                    file_url = f"/api/files/{fid}" if fid else ""
+                    event_data = {
+                        **event_data,
+                        "type": event_data.get("file_type", "application/octet-stream"),
+                        "download_url": file_url,
+                        "url": file_url,
+                    }
+
+                    # Register the FileRecord immediately so /api/files/<id>
+                    # resolves while the stream is still open.  Without this,
+                    # the browser receives the URL before the record exists in
+                    # the session store and gets a 404.
+                    if fid and event_data.get("file_path"):
+                        from server.sessions.store import FileRecord
+                        session.files.append(FileRecord(
+                            file_id=fid,
+                            filename=event_data.get("filename", ""),
+                            file_type=event_data.get("file_type", ""),
+                            file_path=event_data["file_path"],
+                            created_at=datetime.now(timezone.utc),
+                            size_bytes=event_data.get("size_bytes", 0),
+                        ))
+
                 yield _sse_line(event_name, event_data)
 
             # -------------------------------------------------------------- #

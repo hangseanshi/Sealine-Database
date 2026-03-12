@@ -1,4 +1,5 @@
 import { useState, memo } from 'react';
+import CopyButton from './CopyButton';
 
 /**
  * SqlBlock component.
@@ -40,18 +41,29 @@ function SqlBlock({ query, result, isRunning, truncated }) {
             </span>
           )}
         </span>
-        <span className={`sql-toggle ${expanded ? 'expanded' : ''}`}>▶</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {query && (
+            <CopyButton getText={query} title="Copy SQL query" />
+          )}
+          <span className={`sql-toggle ${expanded ? 'expanded' : ''}`}>▶</span>
+        </div>
       </button>
 
       {expanded && (
         <div className="sql-block-body">
-          <pre>
-            <code>{query}</code>
-          </pre>
+          {query && (
+            <>
+              <div className="sql-result-label">Query</div>
+              <pre className="sql-query-text"><code>{query}</code></pre>
+            </>
+          )}
 
           {result !== null && (
             <>
-              <div className="sql-result-label">Result</div>
+              <div className="sql-result-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>Result</span>
+                <CopyButton getText={result} title="Copy result" />
+              </div>
               <div className="sql-result-text">
                 {result}
                 {truncated && (

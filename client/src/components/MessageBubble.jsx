@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
+import remarkBreaks from 'remark-breaks';
+import CopyButton from './CopyButton';
 
 /**
  * MessageBubble component.
@@ -22,7 +24,7 @@ function MessageBubble({ role, text, isStreaming }) {
           // Agent messages are rendered as Markdown
           <>
             {text ? (
-              <ReactMarkdown rehypePlugins={[rehypeHighlight]}>
+              <ReactMarkdown remarkPlugins={[remarkBreaks]} rehypePlugins={[rehypeHighlight]}>
                 {text}
               </ReactMarkdown>
             ) : isStreaming ? (
@@ -32,6 +34,11 @@ function MessageBubble({ role, text, isStreaming }) {
             ) : null}
             {isStreaming && text && <span className="streaming-cursor" />}
           </>
+        )}
+
+        {/* Copy button — fades in on bubble hover via CSS */}
+        {text && !isStreaming && (
+          <CopyButton getText={text} className="message-copy-btn" title="Copy message" />
         )}
       </div>
     </div>
