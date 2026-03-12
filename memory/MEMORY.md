@@ -57,10 +57,24 @@ See `memory/reports.md` for full catalogue of saved reports.
 2. **No FK constraints** — relationships are logical, handle NULL/orphans
 3. **Soft deletes** — DeletedDt column indicates deleted rows
 4. **Archive tables** — Container_Event has multiple snapshot versions (_02May2025, _Revised, etc.)
-5. **Container_Event location hierarchy**:
-   - Use `Facility` if present (specific port/terminal)
-   - Fall back to `Location` if Facility is NULL (general route stop)
+5. **Container_Event location hierarchy** — always use `COALESCE(f.name, l.Name)`:
+   - **Facility** (populated) → join `Sealine_Facilities` on `Facility = Id` → `f.name` = physical terminal (preferred)
+   - **Location** (fallback) → join `Sealine_Locations` on `Location = Id` → `l.Name` = general route stop (used only when Facility is NULL)
 6. **Container_Event.Actual flag**:
    - `Actual = 1` → Date is actual/confirmed event date
    - `Actual = 0` → Date is estimated/predictive
-7. **Sealine_Route.IsActual** — same flag logic (1=actual, 0=planned)
+7. **Sealine_Route** — scheduled ETD/ETA dates only (NOT the full container route):
+   - `RouteType` describes the stop role: `Pre-Pol` → `Pol` (Port of Loading) → `Pod` (Port of Discharge) → `Post-Pod`
+   - `Location_Id` → `Sealine_Locations.Id` (same TrackNumber) for place name and coordinates
+   - `Date` + `IsActual` derive the shipping term:
+     - `Pol` + IsActual=0 → **ETD** (Estimated Time of Departure)
+     - `Pol` + IsActual=1 → **ATD** (Actual Time of Departure)
+     - `Pod` + IsActual=0 → **ETA** (Estimated Time of Arrival)
+     - `Pod` + IsActual=1 → **ATA** (Actual Time of Arrival)
+8. **Route queries — use Sealine_Container_Event as the authoritative source**:
+   - `Sealine_Container_Event` holds the **true, complete route** for each container
+   - All port stops, transshipments, arrivals, and departures are recorded here
+   - Order events by `TRY_CAST(Order_Id AS INT) ASC` to get chronological route
+   - Use `Actual = 1` for confirmed stops, `Actual = 0` for estimated/future stops
+   - Join to `Sealine_Facilities` (via Facility) or `Sealine_Locations` (via Location) for place names and coordinates
+   - `Sealine_Route` only has scheduled ETD/ETA dates — NOT the full stop-by-stop route
