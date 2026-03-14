@@ -525,18 +525,32 @@ function toHex(r,g,b) {
 
 // ── Pure-Leaflet arrow line (no plugin needed) ────────────────────────────
 function drawArrowLine(fromPt, toPt, color) {
-  const dLat = toPt[0] - fromPt[0];
-  const dLon = toPt[1] - fromPt[1];
-  const chord = Math.sqrt(dLat * dLat + dLon * dLon);
+  // Pure Mercator math — no dependency on map state (avoids NaN from map.project)
+  var WSIZ = 1024; // world pixels at zoom 2 (256 * 2^2)
+  function merc(lat, lon) {
+    var s = Math.sin(lat * Math.PI / 180);
+    return {
+      x: (lon + 180) / 360 * WSIZ,
+      y: (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * WSIZ
+    };
+  }
+  function unmerc(px, py) {
+    var n = Math.PI - 2 * Math.PI * py / WSIZ;
+    return { lat: 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))),
+             lng: px / WSIZ * 360 - 180 };
+  }
+  var p1 = merc(fromPt[0], fromPt[1]);
+  var p2 = merc(toPt[0],   toPt[1]);
+  var dx = p2.x - p1.x, dy = p2.y - p1.y;
+  var pixChord = Math.sqrt(dx * dx + dy * dy);
 
-  // Quadratic bezier: push control point northward from midpoint for a gentle arc
-  const midLat = (fromPt[0] + toPt[0]) / 2;
-  const midLon = (fromPt[1] + toPt[1]) / 2;
-  const offset = Math.min(chord * 0.18, 18);   // 18% of chord, capped at 18 deg
-  const ctrlLat = midLat + offset;
-  const ctrlLon = midLon;
+  // Control point: push midpoint northward by 15% of pixel chord, min 40px
+  var pxOffset = Math.max(40, pixChord * 0.15);
+  var ctrl     = unmerc(p1.x + dx / 2, p1.y + dy / 2 - pxOffset);
+  var ctrlLat  = Math.min(85, Math.max(-85, ctrl.lat));
+  var ctrlLon  = ctrl.lng;
 
-  // Sample 50 points along the bezier for a smooth curve
+  // Sample 50 points along the quadratic bezier in lat/lng space
   const N = 50;
   const curvePts = [];
   for (let i = 0; i <= N; i++) {
@@ -548,24 +562,22 @@ function drawArrowLine(fromPt, toPt, color) {
   }
   L.polyline(curvePts, { color: color, weight: 3, opacity: 0.85 }).addTo(map);
 
-  // Arrow placed at curve midpoint (t = 0.5)
+  // Arrow at the bezier midpoint (t = 0.5)
   const arrowLat = 0.25*fromPt[0] + 0.5*ctrlLat + 0.25*toPt[0];
   const arrowLon = 0.25*fromPt[1] + 0.5*ctrlLon + 0.25*toPt[1];
-  // Tangent at t=0.5: sample two nearby points to get the local curve direction
   function bzPt(t) {
     const u = 1 - t;
     return [u*u*fromPt[0]+2*u*t*ctrlLat+t*t*toPt[0], u*u*fromPt[1]+2*u*t*ctrlLon+t*t*toPt[1]];
   }
-  const p1 = bzPt(0.48), p2 = bzPt(0.52);
-  const angle = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * 180 / Math.PI;
+  const pa = bzPt(0.48), pb = bzPt(0.52);
+  const angle = Math.atan2(pb[1] - pa[1], pb[0] - pa[0]) * 180 / Math.PI;
 
   const svg = '<svg width="18" height="18" viewBox="-9 -9 18 18" xmlns="http://www.w3.org/2000/svg">'
     + '<polygon points="0,-7 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
     + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
   L.marker([arrowLat, arrowLon], {
     icon: L.divIcon({ html: svg, className: '', iconSize: [18, 18], iconAnchor: [9, 9] }),
-    interactive: false,
-    zIndexOffset: 100,
+    interactive: false, zIndexOffset: 100,
   }).addTo(map);
 }
 
