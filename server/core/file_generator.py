@@ -980,7 +980,7 @@ def _plot_leaflet_map(
     # ── Lane offsets: separate parallel connections so they don't overlap ──
     # Two connections are "parallel" when their rounded endpoint coords match.
     # We spread them apart by ±LANE_PX pixels perpendicular to the route.
-    _LANE_PX = 38
+    _LANE_PX = 13
     _conn_reg: dict = {}
     for _ri, _route in enumerate(map_data["routes"]):
         _pts = _route["points"]
