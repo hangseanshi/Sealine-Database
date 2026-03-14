@@ -82,7 +82,15 @@ GENERATE_PLOT_TOOL: dict[str, Any] = {
                     '{"routes": [{"name": "CONTAINER_ID", "lat": [...], "lon": [...], '
                     '"labels": [...], "connections": [[0,1],[1,2]]}, ...], "arrows": true} '
                     'Each route gets a distinct color automatically. '
-                    '"labels" per point are hover text (e.g. port name + date).'
+                    '"labels" per point are hover text (e.g. port name + date). '
+                    'To highlight geographic zones (e.g. war zones, risk areas) as '
+                    'filled polygon overlays, add a "zones" key: '
+                    '{"lat": [...], "lon": [...], "labels": [...], '
+                    '"zones": [{"name": "Red Sea War Zone", '
+                    '"lat": [lat1, lat2, ...], "lon": [lon1, lon2, ...], '
+                    '"color": "rgba(255,0,0,0.25)"}]} '
+                    'Each zone is a closed polygon — repeat the first point at the end '
+                    'to close the shape. Zones are rendered as semi-transparent fills.'
                 ),
             },
             "interactive": {
@@ -487,20 +495,61 @@ def _plot_interactive(
             "#F39C12", "#1ABC9C", "#E91E63", "#00BCD4", "#8BC34A",
         ]
 
+        # Hard cap: never render more than 1000 points on a map to avoid
+        # token overflow and browser performance issues.
+        MAX_MAP_POINTS = 1000
+
         routes = data.get("routes")
         arrows = data.get("arrows", False)
         traces: list[Any] = []
         all_lats: list[float] = []
         all_lons: list[float] = []
 
+        # ── Zone polygon overlays (rendered first so they sit under points) ─
+        zones = data.get("zones", [])
+        for zone in zones:
+            z_lats = zone.get("lat", [])
+            z_lons = zone.get("lon", [])
+            z_name = zone.get("name", "Zone")
+            z_color = zone.get("color", "rgba(255,0,0,0.25)")
+            if not z_lats or not z_lons:
+                continue
+            # Derive a solid border color from the fill color
+            border_color = z_color.replace("0.25)", "0.7)").replace("0.2)", "0.7)")
+            traces.append(go.Scattermapbox(
+                lat=z_lats,
+                lon=z_lons,
+                mode="lines",
+                fill="toself",
+                fillcolor=z_color,
+                line=dict(width=2, color=border_color),
+                name=z_name,
+                hoverinfo="name",
+                showlegend=True,
+            ))
+
+        map_truncated = False
+
         if routes:
             # Multiple containers → one colored route per container
+            points_used = 0
+            total_input_points = sum(len(r.get("lat", [])) for r in routes)
             for i, route in enumerate(routes):
+                if points_used >= MAX_MAP_POINTS:
+                    map_truncated = True
+                    break
                 r_lats = route.get("lat", [])
                 r_lons = route.get("lon", [])
                 r_labels = route.get("labels", [str(j) for j in range(len(r_lats))])
                 r_name = route.get("name", f"Route {i+1}")
                 r_connections = route.get("connections", [])
+                # Cap this route's points to stay within the overall budget
+                remaining = MAX_MAP_POINTS - points_used
+                if len(r_lats) > remaining:
+                    map_truncated = True
+                r_lats = r_lats[:remaining]
+                r_lons = r_lons[:remaining]
+                r_labels = r_labels[:remaining]
                 if arrows and not r_connections and len(r_lats) > 1:
                     r_connections = [[j, j + 1] for j in range(len(r_lats) - 1)]
                 color = ROUTE_COLORS[i % len(ROUTE_COLORS)]
@@ -510,16 +559,23 @@ def _plot_interactive(
                 )
                 all_lats.extend(r_lats)
                 all_lons.extend(r_lons)
+                points_used += len(r_lats)
+            if total_input_points > MAX_MAP_POINTS:
+                map_truncated = True
         else:
             # Single-route (legacy) path
-            lats = data.get("lat", [])
-            lons = data.get("lon", [])
-            map_labels = data.get("labels", [str(i) for i in range(len(lats))])
+            raw_lats = data.get("lat", [])
+            raw_lons = data.get("lon", [])
+            if len(raw_lats) > MAX_MAP_POINTS:
+                map_truncated = True
+            lats = raw_lats[:MAX_MAP_POINTS]
+            lons = raw_lons[:MAX_MAP_POINTS]
+            map_labels = data.get("labels", [str(i) for i in range(len(lats))])[:MAX_MAP_POINTS]
             map_values = data.get("values", [])
             connections = data.get("connections", [])
             if arrows and not connections and len(lats) > 1:
                 connections = [[i, i + 1] for i in range(len(lats) - 1)]
-            if map_values and len(map_values) == len(lats):
+            if map_values and len(map_values) >= len(lats):
                 hover_text = [f"{lbl}<br>{val}" for lbl, val in zip(map_labels, map_values)]
             else:
                 hover_text = list(map_labels)
@@ -551,7 +607,7 @@ def _plot_interactive(
         fig.update_layout(
             title=dict(text=title, font=dict(size=16)),
             mapbox=dict(
-                style="open-street-map",
+                style="carto-positron",
                 center=dict(lat=center_lat, lon=center_lon),
                 zoom=zoom,
             ),
@@ -567,7 +623,9 @@ def _plot_interactive(
         filename = f"{file_id}_{title_slug}.html"
         full_path = os.path.join(file_store_path, filename)
         fig.write_html(full_path, include_plotlyjs=True, config={"scrollZoom": True})
-        return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
+        meta = _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
+        meta["map_truncated"] = map_truncated
+        return meta
 
     else:
         return {"error": f"Unsupported plot_type: {plot_type}"}

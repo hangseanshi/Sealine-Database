@@ -377,6 +377,11 @@ class SealineAgent:
                         else "file_generated"
                     )
                     yield _sse(event_type, file_info)
+                    if file_info.get("map_truncated"):
+                        yield _sse(
+                            "warning",
+                            {"message": "The map shows the first 1,000 locations only. Refine your query to see a specific subset."},
+                        )
                     return f"Plot generated: {file_info.get('filename', 'chart')}"
                 except Exception as exc:
                     error_msg = f"Plot generation error: {exc}"
