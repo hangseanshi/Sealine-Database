@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Route: 038VH9459904</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  html,body{margin:0;padding:0;height:100%;font-family:Arial,sans-serif;background:#0d1f33;color:#cde;}
+  #header{padding:8px 16px;background:#0f2744;border-bottom:2px solid #2e5f8a;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+  #header h1{font-size:15px;color:#7eb8e6;margin:0;white-space:nowrap;}
+  #header span{font-size:11px;color:#aac8e0;}
+  #map{height:calc(100vh - 44px);}
+  .popup-box{font-size:12px;min-width:220px;line-height:1.6;}
+  .popup-box .popup-title{font-weight:bold;font-size:13px;color:#1a3a6c;border-bottom:1px solid #ccc;padding-bottom:4px;margin-bottom:6px;}
+  .popup-box .popup-row{display:flex;justify-content:space-between;gap:8px;}
+  .popup-box .popup-label{color:#555;font-weight:bold;}
+  .popup-box .popup-val{color:#222;text-align:right;}
+  .actual{color:#22aa55;font-weight:bold;}
+  .estimated{color:#cc8800;font-weight:bold;}
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>&#128230; 038VH9459904</h1>
+  <span id="hdr-info"></span>
+</div>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
+<script>
+const TRACK      = "038VH9459904";
+const SEALINE    = "MSCU";
+const STATUS     = "IN_TRANSIT";
+const CONTAINERS = {"FFAU5910639": [{"seq": 1, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-12", "actual": true, "desc": "Empty to Shipper"}, {"seq": 2, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-13", "actual": true, "desc": "Export received at CY"}, {"seq": 3, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-17", "actual": true, "desc": "Export Loaded on Vessel"}, {"seq": 4, "loc": "TAN CANG - CAI MEP THI VAI TERMINAL (TCTT)", "lat": 10.509722, "lng": 107.010833, "date": "2026-03-12", "actual": false, "desc": "Estimated Time of Arrival"}], "MSBU8195616": [{"seq": 1, "loc": "C&C Maintenance - Port Road", "lat": 29.5971992, "lng": -94.9994906, "date": "2026-01-12", "actual": true, "desc": "Empty to Shipper"}, {"seq": 2, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-14", "actual": true, "desc": "Export received at CY"}, {"seq": 3, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-17", "actual": true, "desc": "Export Loaded on Vessel"}, {"seq": 4, "loc": "TAN CANG - CAI MEP THI VAI TERMINAL (TCTT)", "lat": 10.509722, "lng": 107.010833, "date": "2026-03-12", "actual": false, "desc": "Estimated Time of Arrival"}], "MSDU8864792": [{"seq": 1, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-12", "actual": true, "desc": "Empty to Shipper"}, {"seq": 2, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-14", "actual": true, "desc": "Export received at CY"}, {"seq": 3, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-17", "actual": true, "desc": "Export Loaded on Vessel"}, {"seq": 4, "loc": "TAN CANG - CAI MEP THI VAI TERMINAL (TCTT)", "lat": 10.509722, "lng": 107.010833, "date": "2026-03-12", "actual": false, "desc": "Estimated Time of Arrival"}], "MSMU8220461": [{"seq": 1, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-12", "actual": true, "desc": "Empty to Shipper"}, {"seq": 2, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-13", "actual": true, "desc": "Export received at CY"}, {"seq": 3, "loc": "BAYPORT TERMINAL", "lat": 29.612222, "lng": -95.005, "date": "2026-01-17", "actual": true, "desc": "Export Loaded on Vessel"}, {"seq": 4, "loc": "TAN CANG - CAI MEP THI VAI TERMINAL (TCTT)", "lat": 10.509722, "lng": 107.010833, "date": "2026-03-12", "actual": false, "desc": "Estimated Time of Arrival"}]};
+
+document.getElementById('hdr-info').textContent =
+  SEALINE + ' • ' + STATUS + ' • ' + Object.keys(CONTAINERS).length + ' containers';
+
+const map = L.map('map',{center:[24.835658074999998,-44.500697412499996],zoom:3,preferCanvas:false});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {attribution:'&copy; OpenStreetMap &copy; CARTO',maxZoom:18}).addTo(map);
+
+const COLORS = ['#4ec9ff','#ff6b6b','#69ff47','#ffe119','#f58231',
+                '#b96ff5','#42d4f4','#f032e6','#bfef45','#fabed4'];
+let ci = 0;
+
+Object.entries(CONTAINERS).forEach(([cnum, events]) => {
+  const col = COLORS[ci++ % COLORS.length];
+  const pts = events.map(e => [e.lat, e.lng]);
+
+  // Draw route line + arrowhead decorators
+  if (pts.length > 1) {
+    // Full polyline for visual continuity
+    L.polyline(pts, {color:col, weight:3, opacity:0.8}).addTo(map);
+
+    // Add an arrow to every individual segment
+    for (let i = 0; i < pts.length - 1; i++) {
+      const seg = L.polyline([pts[i], pts[i+1]], {color:col, weight:3, opacity:0}).addTo(map);
+      L.polylineDecorator(seg, {
+        patterns: [
+          {
+            offset: '50%',
+            repeat: 0,
+            symbol: L.Symbol.arrowHead({
+              pixelSize: 12,
+              polygon: false,
+              pathOptions: {color: col, fillOpacity:1, weight:2}
+            })
+          }
+        ]
+      }).addTo(map);
+    }
+  }
+
+  // Draw markers
+  events.forEach((e,i) => {
+    const isFirst = i===0, isLast = i===events.length-1;
+    const r = isFirst ? 10 : isLast ? 10 : 6;
+    const marker = L.circleMarker([e.lat,e.lng],{
+      radius:r,
+      fillColor: isFirst ? '#22dd66' : isLast ? '#ff4444' : col,
+      color:'#fff', weight:2,
+      opacity:1, fillOpacity: isFirst||isLast ? 1 : 0.85
+    }).addTo(map);
+
+    const badge = e.actual
+      ? '<span class="actual">&#10003; Actual</span>'
+      : '<span class="estimated">&#9711; Estimated</span>';
+
+    marker.bindPopup(`
+      <div class="popup-box">
+        <div class="popup-title">&#128230; ${TRACK}</div>
+        <div class="popup-row"><span class="popup-label">Container</span><span class="popup-val">${cnum}</span></div>
+        <div class="popup-row"><span class="popup-label">Order ID</span><span class="popup-val">${e.seq}</span></div>
+        <div class="popup-row"><span class="popup-label">Location</span><span class="popup-val">${e.loc}</span></div>
+        <div class="popup-row"><span class="popup-label">Date</span><span class="popup-val">${e.date} ${badge}</span></div>
+        <div class="popup-row"><span class="popup-label">Event</span><span class="popup-val">${e.desc}</span></div>
+      </div>`);
+  });
+});
+
+// Legend
+const legend = L.control({position:'bottomleft'});
+legend.onAdd = () => {
+  const d = L.DomUtil.create('div','');
+  d.style.cssText='background:#0f2744;padding:8px 12px;border-radius:6px;border:1px solid #2e5f8a;font-size:11px;color:#cde;line-height:1.8;';
+  d.innerHTML=`<b style="color:#7eb8e6">Legend</b><br>
+    <span style="color:#22dd66">&#9679;</span> Origin &nbsp;
+    <span style="color:#ff4444">&#9679;</span> Destination<br>
+    &#10230; Arrow = travel direction`;
+  return d;
+};
+legend.addTo(map);
+</script>
+</body>
+</html>

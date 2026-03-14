@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POL to POD Routes - ETA/ATA in Next 7 Days</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d1b2a; font-family: 'Segoe UI', sans-serif; }
+  #title-bar {
+    background: #132032;
+    color: #e0eaf4;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-bottom: 1px solid #1e3a5a;
+    letter-spacing: 0.03em;
+  }
+  #map { width: 100%; height: calc(100vh - 36px); }
+  .leaflet-popup-content-wrapper {
+    background: #132032; color: #c8d8e8;
+    border: 1px solid #1e3a5a; border-radius: 8px;
+  }
+  .leaflet-popup-tip { background: #132032; }
+</style>
+</head>
+<body>
+<div id="title-bar">POL to POD Routes - ETA/ATA in Next 7 Days</div>
+<div id="map"></div>
+<script>
+  const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &amp; CARTO', maxZoom: 18
+  }).addTo(map);
+
+  function pinIcon(color) {
+    return L.divIcon({
+      className: '',
+      html: `<svg width="22" height="30" viewBox="0 0 22 30" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="11" cy="28" rx="5" ry="2" fill="rgba(0,0,0,0.3)"/>
+        <path d="M11 0 C5 0 0 5 0 11 C0 19 11 30 11 30 C11 30 22 19 22 11 C22 5 17 0 11 0Z"
+              fill="${color}" stroke="#fff" stroke-width="1.5"/>
+        <circle cx="11" cy="11" r="4" fill="#fff" opacity="0.85"/>
+      </svg>`,
+      iconSize: [22, 30],
+      iconAnchor: [11, 30],
+      popupAnchor: [0, -30]
+    });
+  }
+
+  function addMarker(lat, lng, color, popup) {
+    L.marker([lat, lng], { icon: pinIcon(color) })
+      .bindPopup(popup, { maxWidth: 320 })
+      .addTo(map);
+  }
+
+  addMarker(29.76328, -95.36327, '#2ecc71', 'Port of Loading<br/>Multiple shipments departure');
+    addMarker(41.01384, 28.94966, '#e74c3c', 'Port of Discharge<br/>ETA: Multiple dates');
+    addMarker(40.80276, 29.43068, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-15');
+    addMarker(33.58831, -7.61138, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-13');
+    addMarker(22.75041, 113.57144, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-19');
+    addMarker(36.81196, 34.63886, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(10.34599, 107.08426, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(36.58718, 36.17347, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(-2.19616, -79.88621, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(25.00255, 55.10811, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(-33.96109, 25.61494, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-14, 2026-03-18');
+    addMarker(6.4488, 3.35901, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(10.39972, -75.51444, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(-12.05659, -77.11814, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(40.96667, 28.7, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(51.22047, 4.40026, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(29.95465, -90.07507, '#2ecc71', 'Port of Loading<br/>Multiple shipments departure');
+    addMarker(32.08354, -81.09983, '#2ecc71', 'Port of Loading<br/>Multiple shipments departure');
+    addMarker(35.10168, 129.03004, '#2ecc71', 'Port of Loading');
+    addMarker(54.35227, 18.64912, '#2ecc71', 'Port of Loading');
+    addMarker(51.96375, 1.3511, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-19');
+    addMarker(-26.11694, -48.61611, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(31.79213, 34.64966, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(42.14272, 41.67384, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(5.35444, -4.00167, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(18.94977, 72.95083, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-18');
+    addMarker(42.0937, 19.09841, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-17');
+    addMarker(40.633333333333, 22.95, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-19');
+    addMarker(-29.8579, 31.0292, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-12');
+    addMarker(5.6698, -0.01657, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(-33.92584, 18.42322, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(31.366365, 121.61475, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-18');
+    addMarker(20.86481, 106.68345, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(18.42632, -69.63126, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(15.72778, -88.59444, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(-33.59473, -71.60746, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(3.8801, -77.03116, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(36.81897, 10.16579, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-18');
+    addMarker(-5.83861, 13.46306, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-16');
+    addMarker(40.76499, 29.92928, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(38.41273, 27.13838, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(-6.99306, 110.42083, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-18');
+    addMarker(9.98981, -83.09308, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(32.81841, 34.9885, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(14.58346, 120.9693, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-16');
+    addMarker(5.4166666666667, 100.31666666667, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-12');
+    addMarker(60.4664, 26.94582, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-15');
+    addMarker(2.99903, 101.39141, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(-6.1333333333333, 106.83333333333, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-12');
+    addMarker(-4.05466, 39.66359, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-16');
+    addMarker(-34.90328, -56.18816, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-14');
+    addMarker(10.82302, 106.62965, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-18');
+    addMarker(-37.68611, 176.16667, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-12');
+    addMarker(-12.97111, -38.51083, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-12');
+    addMarker(10.47306, -68.0125, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(10.60156, -66.93293, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(51.51309, 0.48366, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-14');
+    addMarker(26.43442, 50.10326, '#2ecc71', 'Port of Loading');
+    addMarker(24.98917, 51.50022, '#2ecc71', 'Port of Loading');
+    addMarker(24.45118, 54.39696, '#2ecc71', 'Port of Loading');
+    addMarker(25.00255, 55.10811, '#2ecc71', 'Port of Loading');
+    addMarker(6.40948, 4.09152, '#2ecc71', 'Port of Loading');
+    addMarker(27.0174, 49.62251, '#2ecc71', 'Port of Loading');
+    addMarker(22.44633, 39.12455, '#2ecc71', 'Port of Loading');
+    addMarker(34.9414, 127.69569, '#2ecc71', 'Port of Loading');
+    addMarker(36.06488, 120.38042, '#2ecc71', 'Port of Loading');
+    addMarker(36.06488, 120.38042, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-19');
+    addMarker(39.14222, 117.17667, '#2ecc71', 'Port of Loading');
+    addMarker(11.58901, 43.14503, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-19');
+    addMarker(10.51393, 107.01628, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-15');
+    addMarker(22.49359, 113.9156, '#2ecc71', 'Port of Loading');
+    addMarker(-32.0708131, -52.1755309, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-18');
+    addMarker(-3.10194, -60.025, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(3.7755, 98.6832, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-16');
+    addMarker(22.3384, 91.83168, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-17');
+    addMarker(16.80528, 96.15611, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-15');
+    addMarker(14.6937, -17.44406, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(35.18147, 136.90641, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(6.30054, -10.7969, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-19');
+    addMarker(38.79975, 26.97203, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-17');
+    addMarker(44.40478, 8.94439, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(29.87819, 121.54945, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-16');
+    addMarker(32.77657, -79.93092, '#2ecc71', 'Port of Loading');
+    addMarker(54.35227, 18.64912, '#2ecc71', 'Port of Loading<br/>Multiple shipments');
+    addMarker(-12.74083, -38.62083, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(15.69668, -88.61651, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(-23.96083, -46.33361, '#e74c3c', 'Port of Discharge<br/>Multiple ETA dates');
+    addMarker(-22.90642, -43.18223, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-14');
+    addMarker(15.82562, -87.92968, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-17');
+    addMarker(8.94814, -79.56672, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-14');
+    addMarker(-37.814, 144.96332, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-13');
+    addMarker(-33.036, -71.62963, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-17');
+    addMarker(35.895, -5.4945, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-13');
+    addMarker(-54.81084, -68.31591, '#e74c3c', 'Port of Discharge<br/>ETA: 2026-03-15');
+</script>
+</body>
+</html>

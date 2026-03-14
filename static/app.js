@@ -150,10 +150,87 @@
                 },
             });
             const raw = marked.parse(text);
-            return DOMPurify.sanitize(raw);
+            // Allow iframes from same origin (for embedded HTML maps/reports)
+            const clean = DOMPurify.sanitize(raw, {
+                ADD_TAGS: ["iframe"],
+                ADD_ATTR: ["src", "width", "height", "frameborder", "allowfullscreen", "style", "loading"],
+                ALLOW_UNKNOWN_PROTOCOLS: false,
+            });
+            return clean;
         } catch {
             return escapeHtml(text);
         }
+    }
+
+    // ── File embed helpers ───────────────────────────────────────────────────
+    // Matches /files/something.html or /files/something.xlsx anywhere in text
+    const HTML_FILE_RE  = /\/files\/([^\s"'<>]+\.html)/gi;
+    const XLSX_FILE_RE  = /\/files\/([^\s"'<>]+\.xlsx)/gi;
+
+    function injectFileEmbeds(el) {
+        // Embed HTML files as iframes with a toggle button
+        el.querySelectorAll("a[href]").forEach((a) => {
+            const href = a.getAttribute("href");
+            if (!href) return;
+
+            if (/\/files\/[^"'<>\s]+\.html$/i.test(href)) {
+                // Replace link with an embed toggle button + iframe
+                const filename = href.split("/").pop();
+                // Detect label from link text or filename
+                const linkText = (a.textContent || "").toLowerCase();
+                const isChart  = linkText.includes("chart") || filename.toLowerCase().includes("chart");
+                const isMap    = linkText.includes("map")   || filename.toLowerCase().includes("map") || filename.toLowerCase().includes("route");
+                const label    = isChart ? "chart" : isMap ? "map" : "view";
+                const icon     = isChart ? "&#128202;" : "&#128506;";
+
+                const wrapper = document.createElement("div");
+                wrapper.className = "file-embed-wrapper";
+                wrapper.innerHTML = `
+                    <div class="file-embed-bar">
+                        <span class="file-embed-icon">${icon}</span>
+                        <span class="file-embed-name">${escapeHtml(filename)}</span>
+                        <button class="file-embed-toggle" data-src="${escapeHtml(href)}" data-label="${label}">Show ${label}</button>
+                        <a class="file-embed-newtab" href="${escapeHtml(href)}" target="_blank" rel="noopener">&#8599; Open in new tab</a>
+                    </div>
+                    <div class="file-embed-frame hidden"></div>
+                `;
+                a.replaceWith(wrapper);
+
+                wrapper.querySelector(".file-embed-toggle").addEventListener("click", function () {
+                    const frameDiv = wrapper.querySelector(".file-embed-frame");
+                    const lbl = this.dataset.label || "view";
+                    const isHidden = frameDiv.classList.contains("hidden");
+                    if (isHidden) {
+                        if (!frameDiv.querySelector("iframe")) {
+                            const iframe = document.createElement("iframe");
+                            iframe.src    = this.dataset.src;
+                            iframe.width  = "100%";
+                            iframe.height = "500";
+                            iframe.frameBorder = "0";
+                            iframe.loading = "lazy";
+                            iframe.style.borderRadius = "6px";
+                            iframe.style.border = "1px solid #2e5f8a";
+                            frameDiv.appendChild(iframe);
+                        }
+                        frameDiv.classList.remove("hidden");
+                        this.textContent = `Hide ${lbl}`;
+                    } else {
+                        frameDiv.classList.add("hidden");
+                        this.textContent = `Show ${lbl}`;
+                    }
+                });
+
+            } else if (/\/files\/[^"'<>\s]+\.xlsx$/i.test(href)) {
+                // Replace link with a styled download button
+                const filename = href.split("/").pop();
+                const btn = document.createElement("a");
+                btn.href      = href;
+                btn.download  = filename;
+                btn.className = "file-download-btn";
+                btn.innerHTML = `&#128202; Download ${escapeHtml(filename)}`;
+                a.replaceWith(btn);
+            }
+        });
     }
 
     function escapeHtml(text) {
@@ -217,6 +294,11 @@
                 dom.messages.insertBefore(el, loader);
             } else {
                 dom.messages.appendChild(el);
+            }
+
+            // Inject file embeds (HTML iframes, Excel download buttons)
+            if (role === "assistant") {
+                injectFileEmbeds(el);
             }
 
             // Add copy buttons to code blocks

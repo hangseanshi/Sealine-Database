@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Current Container Locations - ETA/ATA in Next 7 Days</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1b2a;
+    color: #c8d8e8;
+    font-family: 'Segoe UI', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+    min-height: 100vh;
+  }
+  .chart-container {
+    width: 100%;
+    max-width: 900px;
+    height: 420px;
+    background: #132032;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+  }
+</style>
+</head>
+<body>
+<div class="chart-container">
+  <canvas id="chart"></canvas>
+</div>
+<script>
+const cfg = {
+  "type": "bar",
+  "data": {
+    "labels": [
+      "Iskenderun",
+      "Izmit",
+      "Istanbul",
+      "Haiphong",
+      "Mersin",
+      "Vung Tau",
+      "Casablanca",
+      "Taichung",
+      "Nansha",
+      "Other Ports"
+    ],
+    "datasets": [
+      {
+        "label": "Container Count at Location",
+        "data": [
+          151,
+          70,
+          19,
+          59,
+          37,
+          65,
+          8,
+          4,
+          5,
+          920
+        ],
+        "backgroundColor": "#4e9af1aa",
+        "borderColor": "#4e9af1",
+        "borderWidth": 2
+      }
+    ]
+  },
+  "options": {
+    "indexAxis": "x",
+    "responsive": true,
+    "maintainAspectRatio": false,
+    "plugins": {
+      "legend": {
+        "labels": {
+          "color": "#c8d8e8"
+        }
+      },
+      "title": {
+        "display": true,
+        "text": "Current Container Locations - ETA/ATA in Next 7 Days",
+        "color": "#e0eaf4",
+        "font": {
+          "size": 16
+        }
+      }
+    },
+    "scales": {
+      "x": {
+        "title": {
+          "display": false,
+          "text": "",
+          "color": "#a0b4c8"
+        },
+        "ticks": {
+          "color": "#a0b4c8"
+        },
+        "grid": {
+          "color": "#2a3f55"
+        }
+      },
+      "y": {
+        "title": {
+          "display": false,
+          "text": "",
+          "color": "#a0b4c8"
+        },
+        "ticks": {
+          "color": "#a0b4c8"
+        },
+        "grid": {
+          "color": "#2a3f55"
+        },
+        "beginAtZero": true
+      }
+    }
+  }
+};
+new Chart(document.getElementById('chart'), cfg);
+</script>
+</body>
+</html>

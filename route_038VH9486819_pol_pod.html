@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>038VH9486819 - Houston to Cartagena</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d1b2a; font-family: 'Segoe UI', sans-serif; }
+  #title-bar {
+    background: #132032;
+    color: #e0eaf4;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-bottom: 1px solid #1e3a5a;
+    letter-spacing: 0.03em;
+  }
+  #map { width: 100%; height: calc(100vh - 36px); }
+  .leaflet-popup-content-wrapper {
+    background: #132032; color: #c8d8e8;
+    border: 1px solid #1e3a5a; border-radius: 8px;
+  }
+  .leaflet-popup-tip { background: #132032; }
+</style>
+</head>
+<body>
+<div id="title-bar">038VH9486819 - Houston to Cartagena</div>
+<div id="map"></div>
+<script>
+  const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &amp; CARTO', maxZoom: 18
+  }).addTo(map);
+
+  function pinIcon(color) {
+    return L.divIcon({
+      className: '',
+      html: `<svg width="22" height="30" viewBox="0 0 22 30" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="11" cy="28" rx="5" ry="2" fill="rgba(0,0,0,0.3)"/>
+        <path d="M11 0 C5 0 0 5 0 11 C0 19 11 30 11 30 C11 30 22 19 22 11 C22 5 17 0 11 0Z"
+              fill="${color}" stroke="#fff" stroke-width="1.5"/>
+        <circle cx="11" cy="11" r="4" fill="#fff" opacity="0.85"/>
+      </svg>`,
+      iconSize: [22, 30],
+      iconAnchor: [11, 30],
+      popupAnchor: [0, -30]
+    });
+  }
+
+  function addMarker(lat, lng, color, popup) {
+    L.marker([lat, lng], { icon: pinIcon(color) })
+      .bindPopup(popup, { maxWidth: 320 })
+      .addTo(map);
+  }
+
+  addMarker(29.76328, -95.36327, '#2ecc71', '<b>Port of Loading</b><br/>Houston, USA<br/>ETD: 2026-03-07<br/>Carrier: MSCU<br/>Status: IN_TRANSIT');
+    addMarker(10.39972, -75.51444, '#e74c3c', '<b>Port of Discharge</b><br/>Cartagena, Colombia<br/>ETA: 2026-03-13<br/>Carrier: MSCU<br/>Status: IN_TRANSIT');
+</script>
+</body>
+</html>

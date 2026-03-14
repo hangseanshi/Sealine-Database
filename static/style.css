@@ -611,3 +611,76 @@ body {
         font-size: 22px;
     }
 }
+
+/* ── File embeds (HTML maps + Excel downloads) ───────────────────────────── */
+.file-embed-wrapper {
+    margin: 10px 0;
+    border: 1px solid #2e5f8a;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #0d1f33;
+}
+
+.file-embed-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: #0f2744;
+    border-bottom: 1px solid #2e5f8a;
+    flex-wrap: wrap;
+}
+
+.file-embed-icon { font-size: 18px; }
+
+.file-embed-name {
+    flex: 1;
+    font-size: 13px;
+    color: #7eb8e6;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-embed-toggle {
+    background: #1a4a8a;
+    color: #cde;
+    border: 1px solid #2e5f8a;
+    border-radius: 5px;
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s;
+}
+.file-embed-toggle:hover { background: #2e5f8a; color: #fff; }
+
+.file-embed-newtab {
+    color: #7eb8e6;
+    font-size: 12px;
+    text-decoration: none;
+    white-space: nowrap;
+}
+.file-embed-newtab:hover { color: #fff; text-decoration: underline; }
+
+.file-embed-frame { padding: 0; }
+.file-embed-frame.hidden { display: none; }
+.file-embed-frame iframe { display: block; }
+
+/* Excel download button */
+.file-download-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: #1a4a8a;
+    color: #cde;
+    border: 1px solid #2e5f8a;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    text-decoration: none;
+    margin: 6px 0;
+    transition: background .15s;
+}
+.file-download-btn:hover { background: #2e5f8a; color: #fff; }

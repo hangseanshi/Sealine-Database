@@ -1,5 +1,23 @@
-anthropic
-httpx
-pyodbc
+# Core API
 fastapi
 uvicorn[standard]
+python-dotenv
+
+# Anthropic Claude SDK
+anthropic
+httpx
+
+# Database
+pyodbc
+
+# Excel
+openpyxl
+
+# Geocoding
+geopy
+
+# Google Gmail API
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client

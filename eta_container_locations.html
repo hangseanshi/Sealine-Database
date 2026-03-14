@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Container Current Locations (ETA/ATA in Next 7 Days)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d1b2a; font-family: 'Segoe UI', sans-serif; }
+  #title-bar {
+    background: #132032;
+    color: #e0eaf4;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-bottom: 1px solid #1e3a5a;
+    letter-spacing: 0.03em;
+  }
+  #map { width: 100%; height: calc(100vh - 36px); }
+  .leaflet-popup-content-wrapper {
+    background: #132032; color: #c8d8e8;
+    border: 1px solid #1e3a5a; border-radius: 8px;
+  }
+  .leaflet-popup-tip { background: #132032; }
+</style>
+</head>
+<body>
+<div id="title-bar">Container Current Locations (ETA/ATA in Next 7 Days)</div>
+<div id="map"></div>
+<script>
+  const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &amp; CARTO', maxZoom: 18
+  }).addTo(map);
+
+  function pinIcon(color) {
+    return L.divIcon({
+      className: '',
+      html: `<svg width="22" height="30" viewBox="0 0 22 30" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="11" cy="28" rx="5" ry="2" fill="rgba(0,0,0,0.3)"/>
+        <path d="M11 0 C5 0 0 5 0 11 C0 19 11 30 11 30 C11 30 22 19 22 11 C22 5 17 0 11 0Z"
+              fill="${color}" stroke="#fff" stroke-width="1.5"/>
+        <circle cx="11" cy="11" r="4" fill="#fff" opacity="0.85"/>
+      </svg>`,
+      iconSize: [22, 30],
+      iconAnchor: [11, 30],
+      popupAnchor: [0, -30]
+    });
+  }
+
+  function addMarker(lat, lng, color, popup) {
+    L.marker([lat, lng], { icon: pinIcon(color) })
+      .bindPopup(popup, { maxWidth: 320 })
+      .addTo(map);
+  }
+
+  addMarker(29.76328, -95.36327, '#FF6B6B', '<strong>Houston Ports</strong><br>Multiple containers in transit<br>Status: Active');
+    addMarker(10.34599, 107.08426, '#4ECDC4', '<strong>Vung Tau</strong><br>ETA: 2026-03-12<br>4 containers from MSCU');
+    addMarker(-12.05659, -77.11814, '#95E1D3', '<strong>Callao Port</strong><br>ATA: 2026-03-12<br>Multiple containers');
+    addMarker(-29.8579, 31.0292, '#F38181', '<strong>Durban</strong><br>ETA: 2026-03-12<br>6 containers from HLCU');
+    addMarker(40.76499, 29.92928, '#AA96DA', '<strong>Izmit Port</strong><br>ETA: 2026-03-12<br>Multiple containers');
+    addMarker(32.81841, 34.9885, '#FCBAD3', '<strong>Haifa Port</strong><br>ETA: 2026-03-12<br>Multiple containers');
+    addMarker(5.4166666666667, 100.31666666667, '#A8D8EA', '<strong>Penang Port</strong><br>ATA: 2026-03-12<br>2 containers from EGLV');
+    addMarker(-6.1333333333333, 106.83333333333, '#7FC97F', '<strong>Jakarta JICT-UTC</strong><br>Status Mixed (ETA/ATA)<br>Multiple containers');
+    addMarker(5.6698, -0.01657, '#FFD3B6', '<strong>Tema Port</strong><br>ETA: 2026-03-12/13<br>Multiple containers');
+    addMarker(44.40478, 8.94439, '#FFAAA5', '<strong>Genova SECH Terminal</strong><br>ETA: 2026-03-12<br>Multiple MSCU containers');
+    addMarker(51.9225, 4.47917, '#FF8B94', '<strong>Rotterdam Port</strong><br>ETA: 2026-03-12/13<br>Multiple containers');
+    addMarker(39.46975, -0.37739, '#B4A7D6', '<strong>Valencia Port</strong><br>ETA: 2026-03-12<br>Multiple containers');
+    addMarker(36.13326, -5.45051, '#95B8D1', '<strong>Algeciras ML Terminal</strong><br>ETA: 2026-03-12<br>Multiple containers');
+    addMarker(33.58831, -7.61138, '#B1C6E1', '<strong>Casablanca Port</strong><br>ETA: 2026-03-12/13<br>Multiple containers');
+    addMarker(6.4488, 3.35901, '#ECCDB5', '<strong>Apapa Port</strong><br>ETA: 2026-03-12<br>Multiple CMA containers');
+    addMarker(31.79213, 34.64966, '#DFC0C2', '<strong>Ashdod Port</strong><br>ETA: 2026-03-12<br>ZIMU containers to Kingston');
+    addMarker(25.00255, 55.10811, '#C8D1D6', '<strong>Jebel Ali Port</strong><br>ETA: 2026-03-13<br>MSCU containers to Hambantota');
+    addMarker(10.39972, -75.51444, '#A9A5B3', '<strong>Cartagena Port</strong><br>ETA: 2026-03-13/14<br>Multiple containers');
+    addMarker(20.86481, 106.68345, '#9D9B95', '<strong>Haiphong Port</strong><br>ETA: 2026-03-13/14<br>Multiple containers');
+    addMarker(22.58333, 114.26667, '#8B8B6B', '<strong>Yantian Port</strong><br>ETA: 2026-03-13<br>Multiple HLCU containers');
+    addMarker(-37.814, 144.96332, '#626262', '<strong>Melbourne Port</strong><br>ETA: 2026-03-13<br>EGLV containers');
+    addMarker(35.895, -5.4945, '#3D3D3D', '<strong>Tanger Med Terminal</strong><br>ETA: 2026-03-13/14<br>Multiple containers');
+    addMarker(35.10168, 129.03004, '#2C2C2C', '<strong>Busan Port</strong><br>ETA: 2026-03-13<br>EGLV containers');
+    addMarker(29.87819, 121.54945, '#1A1A1A', '<strong>Ningbo Port</strong><br>ETA: 2026-03-13<br>COSU containers');
+    addMarker(-33.92584, 18.42322, '#C77DFF', '<strong>Cape Town Port</strong><br>ETA: 2026-03-13<br>Multiple HLCU containers');
+    addMarker(-2.19616, -79.88621, '#E0AAFF', '<strong>Guayaquil Port</strong><br>ETA/ATA: 2026-03-14<br>Multiple containers');
+    addMarker(18.42632, -69.63126, '#9D4EDD', '<strong>Caucedo Terminal</strong><br>ETA/ATA: 2026-03-12/14<br>Multiple CMA containers');
+    addMarker(37.95622, -8.86979, '#7209B7', '<strong>Sines Terminal</strong><br>ETA: 2026-03-12<br>MSCU containers');
+    addMarker(6.1241, 81.1185, '#5A189A', '<strong>Hambantota Port</strong><br>ETA: 2026-03-13<br>MSCU containers');
+    addMarker(22.61626, 120.31333, '#3C096C', '<strong>Kaohsiung Port</strong><br>ETA/ATA: 2026-03-12/13<br>Multiple containers');
+    addMarker(17.99702, -76.79358, '#10002B', '<strong>Kingston Port</strong><br>ETA: 2026-03-12<br>ZIMU containers');
+    addMarker(6.12874, 1.22154, '#E63946', '<strong>Lome Container Terminal</strong><br>ETA: 2026-03-13<br>MSCU containers');
+    addMarker(51.22047, 4.40026, '#F1FAEE', '<strong>Antwerp Port</strong><br>ETA: 2026-03-13/14<br>Multiple CMA containers');
+    addMarker(41.38879, 2.15899, '#A8DADC', '<strong>Barcelona BEST Terminal</strong><br>ETA: 2026-03-12/13<br>Multiple containers');
+    addMarker(32.08354, -81.09983, '#457B9D', '<strong>Savannah Port</strong><br>ETA: 2026-03-14<br>HLCU containers');
+    addMarker(8.94814, -79.56672, '#1D3557', '<strong>Balboa Port</strong><br>ETA: 2026-03-14<br>HLCU containers');
+    addMarker(-34.90328, -56.18816, '#E63946', '<strong>Montevideo Port</strong><br>ETA: 2026-03-14<br>MAEU containers');
+    addMarker(-25.51626, -48.52537, '#F1FAEE', '<strong>Paranagua Terminal</strong><br>ETA: 2026-03-14<br>MAEU containers');
+    addMarker(-23.96083, -46.33361, '#A8DADC', '<strong>Santos Port</strong><br>ETA: 2026-03-12<br>CMA containers');
+    addMarker(24.8608, 67.0104, '#457B9D', '<strong>Karachi Port</strong><br>ETA: 2026-03-13<br>CMA container');
+    addMarker(36.58718, 36.17347, '#1D3557', '<strong>Iskenderun Port</strong><br>ETA: 2026-03-14<br>Multiple MSCU containers');
+    addMarker(40.96667, 28.7, '#E63946', '<strong>Ambarli Terminal</strong><br>ETA: 2026-03-14<br>MAEU containers');
+    addMarker(5.35444, -4.00167, '#F1FAEE', '<strong>Abidjan Port</strong><br>ETA: 2026-03-13<br>Multiple CMA containers');
+    addMarker(51.51309, 0.48366, '#A8DADC', '<strong>London Gateway Port</strong><br>ETA: 2026-03-14<br>MSCU containers');
+    addMarker(38.4251, 15.8975, '#457B9D', '<strong>MCT Medcenter Terminal</strong><br>ETA: 2026-03-14<br>Multiple containers');
+    addMarker(26.53333, -78.7, '#1D3557', '<strong>Freeport Container Port</strong><br>ETA: 2026-03-14<br>Multiple containers');
+    addMarker(42.14272, 41.67384, '#E63946', '<strong>Poti Port</strong><br>ETA: 2026-03-14<br>MSCU container');
+    addMarker(-33.96109, 25.61494, '#F1FAEE', '<strong>Port Elizabeth</strong><br>ETA: 2026-03-14<br>MSCU containers');
+    addMarker(22.83918, 69.7219, '#A8DADC', '<strong>ADANI Terminal Mundra</strong><br>ETA: 2026-03-14<br>Multiple containers');
+    addMarker(10.39972, -75.51444, '#457B9D', '<strong>Cartagena Port</strong><br>Current location hub<br>Multiple shipments');
+    addMarker(9.35222, -79.90444, '#1D3557', '<strong>PPC Terminal Cristobal</strong><br>ETA: 2026-03-14<br>MSCU containers');
+    addMarker(-12.97111, -38.51083, '#E63946', '<strong>Salvador Tecon</strong><br>ATA: 2026-03-12<br>MAEU containers');
+    addMarker(-37.68611, 176.16667, '#F1FAEE', '<strong>Tauranga Container Terminal</strong><br>ATA: 2026-03-12<br>MAEU container');
+</script>
+</body>
+</html>
