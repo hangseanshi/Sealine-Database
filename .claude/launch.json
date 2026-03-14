@@ -3,9 +3,9 @@
   "configurations": [
     {
       "name": "api-server",
-      "runtimeExecutable": "uvicorn",
-      "runtimeArgs": ["api:app", "--reload", "--port", "8001"],
-      "port": 8001
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "flask", "--app", "server.app", "run", "--debug", "--port", "8080"],
+      "port": 8080
     }
   ]
 }
