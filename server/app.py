@@ -19,6 +19,13 @@ import logging
 import os
 import tempfile
 
+from dotenv import load_dotenv
+
+# Load .env before anything reads os.environ (Anthropic client, config, etc.)
+# Use explicit path so it works regardless of cwd (e.g. preview servers).
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_project_root, ".env"))
+
 import anthropic
 import httpx
 from flask import Flask, send_from_directory

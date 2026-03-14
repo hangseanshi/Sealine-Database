@@ -5,6 +5,7 @@ Blueprint: sessions_bp
 Prefix:    /api
 """
 
+import getpass
 import logging
 import os
 import shutil
@@ -53,13 +54,20 @@ def create_session():
     except ImportError:
         db_enabled = False
 
-    logger.info("Session created: %s", session.session_id)
+    # Resolve the OS login name; fall back gracefully if unavailable.
+    try:
+        username = getpass.getuser()
+    except Exception:
+        username = os.environ.get("USERNAME", os.environ.get("USER", ""))
+
+    logger.info("Session created: %s (user=%s)", session.session_id, username)
 
     return jsonify({
         "session_id": session.session_id,
         "created_at": session.created_at.isoformat(),
         "model": cfg.MODEL,
         "db_enabled": db_enabled,
+        "username": username,
     }), 201
 
 
