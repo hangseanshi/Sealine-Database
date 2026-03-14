@@ -69,8 +69,13 @@ GENERATE_PLOT_TOOL: dict[str, Any] = {
                     'For pie: {"labels": [...], "values": [...]}. '
                     'For heatmap: {"labels_x": [...], "labels_y": [...], "values": [[...]]}. '
                     'For map: {"lat": [...], "lon": [...], "labels": [...], '
-                    '"values": [...]} where labels are hover text (e.g. container ID) '
-                    'and values are optional numeric values shown on hover.'
+                    '"values": [...], "arrows": true/false, '
+                    '"connections": [[from_idx, to_idx], ...]} '
+                    'where labels are hover text (e.g. container ID), '
+                    'values are optional numeric values shown on hover, '
+                    '"arrows": true auto-connects points in sequence with directional arrows, '
+                    '"connections" explicitly defines which point pairs to connect with arrows '
+                    '(e.g. [[0,1],[1,2]] draws arrows from point 0→1 and 1→2).'
                 ),
             },
             "interactive": {
@@ -397,44 +402,127 @@ def _plot_interactive(
         )
 
     elif plot_type == "map":
+        import math
+
         lats = data.get("lat", [])
         lons = data.get("lon", [])
         map_labels = data.get("labels", [str(i) for i in range(len(lats))])
         map_values = data.get("values", [])
+        # connections: list of [from_idx, to_idx] pairs, OR True to auto-connect in order
+        connections = data.get("connections", [])
+        arrows = data.get("arrows", False)
 
-        # Build hover text: label + value if values provided
+        # Auto-connect consecutive points when arrows=True and no explicit connections
+        if arrows and not connections and len(lats) > 1:
+            connections = [[i, i + 1] for i in range(len(lats) - 1)]
+
+        # Build hover text
         if map_values and len(map_values) == len(lats):
-            hover_text = [
-                f"{lbl}<br>{val}" for lbl, val in zip(map_labels, map_values)
-            ]
+            hover_text = [f"{lbl}<br>{val}" for lbl, val in zip(map_labels, map_values)]
         else:
             hover_text = list(map_labels)
 
-        # Colour points by value if provided, otherwise use a flat colour
-        marker_cfg: dict[str, Any] = {"size": 10}
+        traces: list[Any] = []
+
+        # ── Arrow lines & arrowheads ──────────────────────────────────
+        def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+            """Return compass bearing (degrees) from point 1 → point 2."""
+            rlat1, rlon1, rlat2, rlon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+            dlon = rlon2 - rlon1
+            x = math.sin(dlon) * math.cos(rlat2)
+            y = math.cos(rlat1) * math.sin(rlat2) - math.sin(rlat1) * math.cos(rlat2) * math.cos(dlon)
+            return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+        if connections:
+            # Draw one line trace per connection (allows per-line styling)
+            for from_idx, to_idx in connections:
+                if from_idx >= len(lats) or to_idx >= len(lats):
+                    continue
+                # Line segment
+                traces.append(go.Scattermapbox(
+                    lat=[lats[from_idx], lats[to_idx]],
+                    lon=[lons[from_idx], lons[to_idx]],
+                    mode="lines",
+                    line=dict(width=2, color="#E07B39"),
+                    hoverinfo="skip",
+                    showlegend=False,
+                ))
+                # Arrowhead: ">" centred at the midpoint of the segment.
+                # All geometry is done in Mercator (lon, merc_y) space because
+                # Mercator is conformal — angles in that space match visual
+                # angles on screen, unlike raw lat/lon or compass bearings.
+                def _merc_y(lat_deg: float) -> float:
+                    # Returns Mercator Y scaled to degrees so that X (lon °)
+                    # and Y share the same linear scale → angles are correct.
+                    lr = math.radians(lat_deg)
+                    return math.degrees(math.log(math.tan(math.pi / 4 + lr / 2)))
+
+                def _inv_merc_y(y: float) -> float:
+                    return math.degrees(
+                        2 * math.atan(math.exp(math.radians(y))) - math.pi / 2
+                    )
+
+                mx1 = lons[from_idx];  my1 = _merc_y(lats[from_idx])
+                mx2 = lons[to_idx];    my2 = _merc_y(lats[to_idx])
+                dx, dy = mx2 - mx1, my2 - my1
+                seg_m = math.sqrt(dx * dx + dy * dy)
+                if seg_m < 1e-10:
+                    continue  # skip zero-length segments
+
+                # Unit forward vector in Mercator space
+                ux, uy = dx / seg_m, dy / seg_m
+
+                # Midpoint in Mercator space
+                mid_mx = (mx1 + mx2) / 2
+                mid_my = (my1 + my2) / 2
+                mid_lat_m = _inv_merc_y(mid_my)
+
+                # Wing size: 5 % of Mercator segment length, min 0.003 units
+                arrow_size = max(seg_m * 0.05, 0.003)
+
+                # Rotate forward vector by +150° and −150° to get wing directions.
+                # Standard 2-D rotation: new = R(θ) · (ux, uy)
+                c150 = math.cos(math.radians(150))   # −√3/2
+                s150 = math.sin(math.radians(150))   #  1/2
+                wl_mx = mid_mx + arrow_size * (ux * c150 - uy * s150)
+                wl_my = mid_my + arrow_size * (ux * s150 + uy * c150)
+                wr_mx = mid_mx + arrow_size * (ux * c150 + uy * s150)
+                wr_my = mid_my + arrow_size * (-ux * s150 + uy * c150)
+
+                # Draw: left-wing → tip(midpoint) → right-wing
+                traces.append(go.Scattermapbox(
+                    lat=[_inv_merc_y(wl_my), mid_lat_m, _inv_merc_y(wr_my)],
+                    lon=[wl_mx, mid_mx, wr_mx],
+                    mode="lines",
+                    line=dict(width=2, color="#E07B39"),
+                    hoverinfo="skip",
+                    showlegend=False,
+                ))
+
+        # ── Location dot markers ──────────────────────────────────────
+        marker_cfg: dict[str, Any] = {"size": 12}
         if map_values and len(map_values) == len(lats):
             marker_cfg.update({
                 "color": map_values,
                 "colorscale": "Viridis",
                 "showscale": True,
                 "colorbar": {"title": "Value"},
-                "opacity": 0.85,
+                "opacity": 0.9,
             })
         else:
-            marker_cfg.update({"color": HEADER_COLOR_HEX, "opacity": 0.85})
+            marker_cfg.update({"color": HEADER_COLOR_HEX, "opacity": 0.9})
 
-        fig = go.Figure(
-            data=[
-                go.Scattermapbox(
-                    lat=lats,
-                    lon=lons,
-                    mode="markers",
-                    marker=go.scattermapbox.Marker(**marker_cfg),
-                    text=hover_text,
-                    hoverinfo="text",
-                )
-            ]
-        )
+        traces.append(go.Scattermapbox(
+            lat=lats,
+            lon=lons,
+            mode="markers+text",
+            marker=go.scattermapbox.Marker(**marker_cfg),
+            text=hover_text,
+            hoverinfo="text",
+            showlegend=False,
+        ))
+
+        fig = go.Figure(data=traces)
 
         # Auto-centre on the data's centroid; fall back if lists are empty
         center_lat = (sum(lats) / len(lats)) if lats else 20.0
@@ -459,7 +547,7 @@ def _plot_interactive(
         fig.update_layout(
             title=dict(text=title, font=dict(size=16)),
             mapbox=dict(
-                style="open-street-map",   # free tiles, no token required
+                style="open-street-map",
                 center=dict(lat=center_lat, lon=center_lon),
                 zoom=zoom,
             ),
@@ -469,7 +557,7 @@ def _plot_interactive(
 
         filename = f"{file_id}_{title_slug}.html"
         full_path = os.path.join(file_store_path, filename)
-        fig.write_html(full_path, include_plotlyjs=True)
+        fig.write_html(full_path, include_plotlyjs=True, config={"scrollZoom": True})
         return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
 
     else:

@@ -680,7 +680,7 @@ class SealineAgent:
                 )
                 break
             except Exception as exc:
-                logger.exception("Unexpected agent error")
+                logger.exception("Unexpected agent error: %s", exc)
                 yield _sse(
                     "error",
                     {

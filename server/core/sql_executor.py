@@ -38,14 +38,17 @@ _ALLOWED_FIRST_WORDS = frozenset({"SELECT", "WITH"})
 # NOTE: "DELETE" is handled separately below with a word-boundary check so
 # that column names like "is_deleted" or "delete_flag" are not falsely blocked.
 _DANGEROUS_KEYWORDS = frozenset({
-    "INSERT", "UPDATE", "DROP", "ALTER", "TRUNCATE",
+    "DROP", "ALTER", "TRUNCATE",
     "CREATE", "GRANT", "REVOKE", "EXEC", "EXECUTE",
     "XP_", "SP_CONFIGURE", "SHUTDOWN", "DBCC",
 })
 
-# Regex for DELETE used as a SQL statement keyword (must be followed by whitespace,
-# a comment marker, or end-of-string — not part of a column/table name).
+# Keywords that need word-boundary checks so they don't false-positive on column
+# names (e.g., "UpdatedDT", "is_deleted", "delete_flag", "InsertDate", "MergeKey").
+_INSERT_STMT_RE = re.compile(r"\bINSERT\s", re.IGNORECASE)
+_UPDATE_STMT_RE = re.compile(r"\bUPDATE\s", re.IGNORECASE)
 _DELETE_STMT_RE = re.compile(r"\bDELETE\s", re.IGNORECASE)
+_MERGE_STMT_RE = re.compile(r"\bMERGE\s", re.IGNORECASE)
 
 
 @dataclass
@@ -114,13 +117,19 @@ def execute_sql(query: str, connection_string: str | None = None) -> SqlResult:
                 error=True,
             )
 
-    # DELETE requires a space after it to be considered a statement keyword.
-    # This allows column/table names like "is_deleted" or "delete_flag".
-    if _DELETE_STMT_RE.search(q):
-        return SqlResult(
-            text="ERROR: Query contains disallowed keyword: DELETE",
-            error=True,
-        )
+    # INSERT, UPDATE, DELETE, MERGE require word-boundary + space checks so
+    # column names like "InsertDate", "UpdatedDT", "is_deleted", "MergeKey" are allowed.
+    for _re, _kw in (
+        (_INSERT_STMT_RE, "INSERT"),
+        (_UPDATE_STMT_RE, "UPDATE"),
+        (_DELETE_STMT_RE, "DELETE"),
+        (_MERGE_STMT_RE, "MERGE"),
+    ):
+        if _re.search(q):
+            return SqlResult(
+                text=f"ERROR: Query contains disallowed keyword: {_kw}",
+                error=True,
+            )
 
     conn_str = connection_string or _build_connection_string()
 

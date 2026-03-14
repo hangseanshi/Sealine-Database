@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import InputBar from './components/InputBar';
@@ -255,14 +255,31 @@ export default function App() {
 
   // --- Session Actions ---
 
+  // Derive a friendly first name from the OS login username.
+  // Handles: "sean", "sean.smith", "sean_smith", "Sean Smith", "DOMAIN\sean"
+  const getFirstName = (username) => {
+    if (!username) return null;
+    const stripped = username.includes('\\') ? username.split('\\').pop() : username;
+    const first = stripped.split(/[\s._-]/)[0];
+    return first ? first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() : null;
+  };
+
   const handleNewChat = useCallback(async () => {
     try {
       const data = await createSession();
+
+      const firstName = getFirstName(data.username);
+      const greeting = firstName
+        ? `Hi ${firstName}, welcome to your Sealine data chat.`
+        : 'Welcome to your Sealine data chat.';
+
       const newSession = {
         id: data.session_id,
         createdAt: data.created_at,
         title: 'New Chat',
-        messages: [],
+        messages: [
+          { id: getNextId(), type: 'agent', text: greeting, isStreaming: false },
+        ],
       };
       setSessions((prev) => [newSession, ...prev]);
       setActiveSessionId(data.session_id);
@@ -328,6 +345,11 @@ export default function App() {
   const toggleSidebar = useCallback(() => {
     setSidebarOpen((prev) => !prev);
   }, []);
+
+  // Auto-create a new chat session when the app first loads
+  useEffect(() => {
+    handleNewChat();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Find the active session
   const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
