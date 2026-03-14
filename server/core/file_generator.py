@@ -41,21 +41,22 @@ logger = logging.getLogger(__name__)
 GENERATE_PLOT_TOOL: dict[str, Any] = {
     "name": "generate_plot",
     "description": (
-        "Generate a chart or plot from data. Supports bar, line, scatter, pie, "
+        "Generate a chart or plot from data. Supports bar, bar_stacked (grouped series), line, scatter, pie, "
         "heatmap, histogram, and map (interactive geographic map with OpenStreetMap "
         "tiles) chart types. ALWAYS use plot_type='map' with interactive=true when "
         "displaying geographic/location data with latitude and longitude coordinates. "
-        "Use matplotlib for static charts or plotly for interactive charts."
+        "Use matplotlib for static charts or Leaflet.js for interactive maps / Plotly for interactive charts."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "plot_type": {
                 "type": "string",
-                "enum": ["bar", "line", "scatter", "pie", "heatmap", "histogram", "map"],
+                "enum": ["bar", "bar_stacked", "line", "scatter", "pie", "heatmap", "histogram", "map"],
                 "description": (
                     "Chart type. Use 'map' for any geographic/location data with "
-                    "lat/lon coordinates — it renders an interactive OpenStreetMap. "
+                    "lat/lon coordinates — it renders an interactive Leaflet map. "
+                    "Use 'bar_stacked' for stacked/grouped bar charts with multiple series. "
                     "Other types: bar, line, scatter, pie, heatmap, histogram."
                 ),
             },
@@ -65,24 +66,28 @@ GENERATE_PLOT_TOOL: dict[str, Any] = {
                 "description": (
                     "Chart data as JSON. "
                     'For bar/line/histogram: {"labels": [...], "values": [...]}. '
+                    'For bar_stacked: {"labels": [...], "series": [{"name": "SeriesA", "values": [...]}, {"name": "SeriesB", "values": [...]}]}. '
                     'For scatter: {"x": [...], "y": [...]}. '
                     'For pie: {"labels": [...], "values": [...]}. '
                     'For heatmap: {"labels_x": [...], "labels_y": [...], "values": [[...]]}. '
                     'For map with a SINGLE route: {"lat": [...], "lon": [...], "labels": [...], '
-                    '"values": [...], "arrows": true/false, '
+                    '"values": [...], "sizes": [...], "arrows": true/false, '
                     '"connections": [[from_idx, to_idx], ...]} '
                     'where labels are hover text (e.g. container ID), '
                     'values are optional numeric values shown on hover, '
                     '"arrows": true auto-connects points in sequence with directional arrows, '
                     '"connections" explicitly defines which point pairs to connect with arrows '
                     '(e.g. [[0,1],[1,2]] draws arrows from point 0→1 and 1→2). '
-                    'For map with MULTIPLE containers/routes (ALWAYS use this when showing '
-                    'routes for more than one container — do NOT call generate_plot separately '
-                    'for each container): '
-                    '{"routes": [{"name": "CONTAINER_ID", "lat": [...], "lon": [...], '
-                    '"labels": [...], "connections": [[0,1],[1,2]]}, ...], "arrows": true} '
-                    'Each route gets a distinct color automatically. '
-                    '"labels" per point are hover text (e.g. port name + date). '
+                    'For map with MULTIPLE containers/routes — ALWAYS use the GROUPS format. '
+                    'Pass flat parallel arrays with a "groups" key; Python auto-groups them into separate coloured routes: '
+                    '{"lat": [lat1,lat2,...], "lon": [lon1,lon2,...], '
+                    '"labels": ["label1","label2",...], '
+                    '"groups": ["CONTAINER_A","CONTAINER_A","CONTAINER_B","CONTAINER_B",...], '
+                    '"arrows": true} '
+                    'All points with the same group name form one coloured route with arrows. '
+                    'Each distinct group value gets a distinct colour automatically. '
+                    'DO NOT build nested route objects — use flat arrays + groups instead. '
+                    '"labels" per point are popup text shown on click. '
                     'To highlight geographic zones (e.g. war zones, risk areas) as '
                     'filled polygon overlays, add a "zones" key: '
                     '{"lat": [...], "lon": [...], "labels": [...], '
@@ -90,7 +95,14 @@ GENERATE_PLOT_TOOL: dict[str, Any] = {
                     '"lat": [lat1, lat2, ...], "lon": [lon1, lon2, ...], '
                     '"color": "rgba(255,0,0,0.25)"}]} '
                     'Each zone is a closed polygon — repeat the first point at the end '
-                    'to close the shape. Zones are rendered as semi-transparent fills.'
+                    'to close the shape. Zones are rendered as semi-transparent fills. '
+                    'To highlight countries or world regions by name, add '
+                    '"highlight_regions": [{"name": "China", "color": "rgba(255,0,0,0.25)"}, '
+                    '{"name": "United States", "color": "rgba(31,71,136,0.25)"}] '
+                    'to the map data. Country names are matched case-insensitively. '
+                    'Also supports ISO alpha-2 codes (e.g. "CN", "US", "DE"). '
+                    'To render bubble maps where marker size reflects a numeric value, '
+                    'include "sizes": [n1, n2, ...] — values are scaled to pixel radius.'
                 ),
             },
             "interactive": {
@@ -147,7 +159,7 @@ GENERATE_EXCEL_TOOL: dict[str, Any] = {
         "properties": {
             "title": {"type": "string", "description": "Sheet name."},
             "columns": {"type": "array", "items": {"type": "string"}},
-            "rows": {"type": "array", "items": {"type": "array"}},
+            "rows": {"type": "array", "items": {"type": "array", "items": {}}},
             "filename": {
                 "type": "string",
                 "description": "Output filename without extension.",
@@ -335,6 +347,27 @@ def _plot_static(
     elif plot_type == "histogram":
         ax.hist(values, bins="auto", color=HEADER_COLOR_HEX, edgecolor="white")
 
+    elif plot_type == "bar_stacked":
+        series_list = data.get("series", [])
+        x_pos = range(len(labels))
+        bottom = [0.0] * len(labels)
+        PALETTE = [
+            "#1F4788", "#E07B39", "#2ECC71", "#E74C3C", "#9B59B6",
+            "#F39C12", "#1ABC9C", "#E91E63", "#00BCD4", "#8BC34A",
+        ]
+        for idx, s in enumerate(series_list):
+            s_vals = s.get("values", [0] * len(labels))
+            ax.bar(
+                x_pos, s_vals, bottom=bottom,
+                label=s.get("name", f"Series {idx+1}"),
+                color=PALETTE[idx % len(PALETTE)],
+                edgecolor="white",
+            )
+            bottom = [b + v for b, v in zip(bottom, s_vals)]
+        ax.set_xticks(list(x_pos))
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        ax.legend(fontsize=9)
+
     else:
         plt.close(fig)
         return {"error": f"Unsupported plot_type: {plot_type}"}
@@ -353,6 +386,608 @@ def _plot_static(
     plt.close(fig)
 
     return _file_meta(file_id, f"{title_slug}.png", "image/png", full_path)
+
+
+# ---------------------------------------------------------------------------
+# Leaflet map HTML template (placeholders: |||TITLE|||, |||DATA_JSON|||,
+# |||CENTER_LAT|||, |||CENTER_LON|||, |||ZOOM|||)
+# ---------------------------------------------------------------------------
+_LEAFLET_MAP_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>|||TITLE|||</title>
+<script>
+window.onerror=function(m,s,l,c,e){
+  var el=document.getElementById('map-error');
+  if(el){el.style.display='block';el.innerHTML='<b>JS Error:</b> '+m+' (line '+l+')';}
+  else if(document.body){document.body.style.background='#fff';document.body.innerHTML='<pre style="color:red;padding:20px">JS Error: '+m+'\\nLine: '+l+'</pre>';}
+  else{setTimeout(function(){document.body&&(document.body.style.background='#fff',document.body.innerHTML='<pre style="color:red;padding:20px">JS Error: '+m+'\\nLine: '+l+'</pre>');},200);}
+  return false;
+};
+</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<style>
+  html, body, #map { margin: 0; padding: 0; width: 100%; height: 100vh; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .map-title {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; background: rgba(255,255,255,0.95);
+    padding: 7px 20px; border-radius: 8px;
+    font-size: 15px; font-weight: 700; color: #1F4788;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+    white-space: nowrap; pointer-events: none;
+  }
+  .legend {
+    background: rgba(255,255,255,0.95); border-radius: 8px;
+    padding: 10px 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+    max-height: 280px; overflow-y: auto; min-width: 150px;
+  }
+  .legend h4 {
+    margin: 0 0 8px 0; font-size: 11px; font-weight: 700;
+    color: #555; text-transform: uppercase; letter-spacing: 0.6px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; color: #333; }
+  .leg-line { width: 22px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+  .leg-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.8); flex-shrink: 0; }
+  .leg-zone { width: 14px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+  .stop-label {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 11px; font-weight: 600;
+    color: #1a1a1a;
+    white-space: nowrap;
+    text-shadow: 1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff;
+    pointer-events: none;
+  }
+  .leaflet-popup-content { font-size: 13px; line-height: 1.6; min-width: 160px; }
+</style>
+</head>
+<body>
+<div class="map-title">|||TITLE|||</div>
+<div id="map"></div>
+<div id="map-error" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:#fff;padding:20px;border:2px solid red;border-radius:8px;z-index:9999;
+  font-family:monospace;font-size:13px;max-width:80%;word-break:break-all;"></div>
+<script>
+try {
+// ── Data ─────────────────────────────────────────────────────────────────
+const MAP_DATA = |||DATA_JSON|||;
+
+// ── Country name → ISO numeric code mapping ───────────────────────────────
+const COUNTRY_CODES = {
+  'afghanistan':4,'albania':8,'algeria':12,'angola':24,'argentina':32,
+  'australia':36,'austria':40,'bahrain':48,'bangladesh':50,'belgium':56,
+  'bolivia':68,'brazil':76,'bulgaria':100,'cambodia':116,'cameroon':120,
+  'canada':124,'chile':152,'china':156,'prc':156,'cn':156,'colombia':170,
+  'congo':180,'costa rica':188,'croatia':191,'cuba':192,'czech republic':203,
+  'czechia':203,'denmark':208,'dk':208,'dominican republic':214,
+  'ecuador':218,'egypt':818,'eg':818,'ethiopia':231,'finland':246,'fi':246,
+  'france':250,'fr':250,'germany':276,'de':276,'ghana':288,'greece':300,
+  'gr':300,'hong kong':344,'hk':344,'hungary':348,'india':356,'in':356,
+  'indonesia':360,'id':360,'iran':364,'iraq':368,'ireland':372,'israel':376,
+  'il':376,'italy':380,'it':380,'jamaica':388,'japan':392,'jp':392,
+  'jordan':400,'kenya':404,'south korea':410,'korea':410,'kr':410,
+  'kuwait':414,'kw':414,'laos':418,'latvia':428,'libya':434,'malaysia':458,
+  'my':458,'mexico':484,'mx':484,'morocco':504,'ma':504,'mozambique':508,
+  'myanmar':104,'burma':104,'mm':104,'netherlands':528,'nl':528,'holland':528,
+  'new zealand':554,'nz':554,'nicaragua':558,'nigeria':566,'ng':566,
+  'norway':578,'no':578,'oman':512,'om':512,'pakistan':586,'pk':586,
+  'panama':591,'pa':591,'peru':604,'philippines':608,'ph':608,'poland':616,
+  'pl':616,'portugal':620,'pt':620,'qatar':634,'qa':634,'romania':642,
+  'russia':643,'ru':643,'saudi arabia':682,'sa':682,'senegal':686,
+  'singapore':702,'sg':702,'somalia':706,'south africa':710,'za':710,
+  'spain':724,'es':724,'sri lanka':144,'lk':144,'sudan':729,'sd':729,
+  'sweden':752,'se':752,'switzerland':756,'ch':756,'taiwan':158,'tw':158,
+  'tanzania':834,'tz':834,'thailand':764,'th':764,'tunisia':788,'tn':788,
+  'turkey':792,'tr':792,'ukraine':804,'ua':804,'united arab emirates':784,
+  'uae':784,'ae':784,'united kingdom':826,'uk':826,'gb':826,'britain':826,
+  'united states':840,'usa':840,'us':840,'america':840,'uruguay':858,
+  'venezuela':862,'vietnam':704,'vn':704,'yemen':887,'ye':887,
+  'zambia':894,'zimbabwe':716
+};
+
+// ── Init map — CartoDB Voyager (English labels everywhere) ────────────────
+if (!window.L) throw new Error('Leaflet not loaded — window.L is ' + typeof window.L);
+const map = L.map('map', { zoomControl: true, scrollWheelZoom: true })
+             .setView([|||CENTER_LAT|||, |||CENTER_LON|||], |||ZOOM|||);
+// Force re-layout after iframe finishes sizing (fixes blank-map-in-iframe bug)
+// Call multiple times to cover browsers that finish sizing at different times
+[100, 300, 600, 1200].forEach(function(ms) {
+  setTimeout(function() { map.invalidateSize(false); }, ms);
+});
+window.addEventListener('resize', function() { map.invalidateSize(false); });
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+  subdomains: 'abcd', maxZoom: 19
+}).addTo(map);
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function parseRgba(str) {
+  if (!str) return { r: 31, g: 71, b: 136, a: 0.25 };
+  const m = str.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
+  if (m) return { r: +m[1], g: +m[2], b: +m[3], a: m[4] !== undefined ? +m[4] : 1 };
+  if (str[0] === '#') {
+    const h = str.slice(1);
+    return { r: parseInt(h.slice(0,2),16), g: parseInt(h.slice(2,4),16), b: parseInt(h.slice(4,6),16), a: 1 };
+  }
+  return { r: 31, g: 71, b: 136, a: 0.25 };
+}
+function toHex(r,g,b) {
+  return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
+}
+
+// ── Pure-Leaflet arrow line (no plugin needed) ────────────────────────────
+function drawArrowLine(fromPt, toPt, color) {
+  // Line
+  L.polyline([fromPt, toPt], { color: color, weight: 3, opacity: 0.85 }).addTo(map);
+
+  // Arrow at midpoint via SVG DivIcon
+  const midLat = (fromPt[0] + toPt[0]) / 2;
+  const midLon = (fromPt[1] + toPt[1]) / 2;
+  const dLat = toPt[0] - fromPt[0];
+  const dLon = toPt[1] - fromPt[1];
+  // bearing: 0° = north, clockwise
+  const angle = Math.atan2(dLon, dLat) * 180 / Math.PI;
+  const svg = '<svg width="18" height="18" viewBox="-9 -9 18 18" xmlns="http://www.w3.org/2000/svg">'
+    + '<polygon points="0,-7 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
+    + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
+  L.marker([midLat, midLon], {
+    icon: L.divIcon({ html: svg, className: '', iconSize: [18, 18], iconAnchor: [9, 9] }),
+    interactive: false,
+    zIndexOffset: 100,
+  }).addTo(map);
+}
+
+// ── Legend ────────────────────────────────────────────────────────────────
+const legendCtrl = L.control({ position: 'bottomright' });
+legendCtrl.onAdd = function() {
+  const div = L.DomUtil.create('div', 'legend');
+  let html = '<h4>Legend</h4>';
+  MAP_DATA.routes.forEach(r => {
+    if (!r.name) return;
+    const hasLines = r.connections && r.connections.length > 0;
+    html += '<div class="legend-item">';
+    if (hasLines) html += '<div class="leg-line" style="background:' + r.color + '"></div>';
+    html += '<div class="leg-dot" style="background:' + r.color + '"></div>';
+    html += '<span>' + r.name + '</span></div>';
+  });
+  MAP_DATA.zones.forEach(z => {
+    const c = parseRgba(z.color);
+    const hex = toHex(c.r, c.g, c.b);
+    html += '<div class="legend-item"><div class="leg-zone" style="background:' + hex
+          + ';opacity:0.55;border:2px solid ' + hex + '"></div><span>' + z.name + '</span></div>';
+  });
+  (MAP_DATA.highlight_regions || []).forEach(r => {
+    const c = parseRgba(r.color);
+    const hex = toHex(c.r, c.g, c.b);
+    html += '<div class="legend-item"><div class="leg-zone" style="background:' + hex
+          + ';opacity:0.55;border:2px solid ' + hex + '"></div><span>' + r.name + '</span></div>';
+  });
+  div.innerHTML = html;
+  return div;
+};
+legendCtrl.addTo(map);
+
+// ── Zone polygons ──────────────────────────────────────────────────────────
+MAP_DATA.zones.forEach(function(zone) {
+  const c = parseRgba(zone.color);
+  const hex = toHex(c.r, c.g, c.b);
+  L.polygon(zone.latlngs, {
+    color: hex, weight: 2, opacity: 0.85,
+    fillColor: hex, fillOpacity: c.a,
+  }).addTo(map).bindTooltip('<b>' + zone.name + '</b>', { sticky: true });
+});
+
+// ── Country / region highlights (TopoJSON world atlas) ────────────────────
+const highlightRegions = MAP_DATA.highlight_regions || [];
+if (highlightRegions.length > 0) {
+  const codeColorMap = {};
+  highlightRegions.forEach(function(region) {
+    const key = (region.name || '').toLowerCase().trim();
+    const numCode = COUNTRY_CODES[key];
+    if (numCode !== undefined) {
+      codeColorMap[numCode] = { color: region.color, name: region.name };
+    }
+  });
+  fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+    .then(function(r) { return r.json(); })
+    .then(function(world) {
+      if (typeof topojson === 'undefined') return;
+      const countries = topojson.feature(world, world.objects.countries);
+      L.geoJSON(countries, {
+        style: function(feature) {
+          const match = codeColorMap[+feature.id];
+          if (match) {
+            const c = parseRgba(match.color);
+            const hex = toHex(c.r, c.g, c.b);
+            return { color: hex, weight: 1.5, opacity: 0.8, fillColor: hex, fillOpacity: c.a };
+          }
+          return { fillOpacity: 0, opacity: 0, weight: 0 };
+        },
+        onEachFeature: function(feature, layer) {
+          const match = codeColorMap[+feature.id];
+          if (match) layer.bindTooltip('<b>' + match.name + '</b>', { sticky: true });
+        }
+      }).addTo(map);
+    }).catch(function() {});
+}
+
+// ── Routes — lines + arrows + labelled dots ───────────────────────────────
+MAP_DATA.routes.forEach(function(route) {
+  const pts = route.points;        // [[lat, lon], ...]
+  const color = route.color;
+  const connections = route.connections || [];
+  const sizes = route.sizes || [];
+  const labels = route.labels || [];
+
+  if (!pts || pts.length === 0) return;
+
+  // 1. Draw lines with arrow markers
+  connections.forEach(function(conn) {
+    const fi = conn[0], ti = conn[1];
+    if (fi >= pts.length || ti >= pts.length) return;
+    drawArrowLine(pts[fi], pts[ti], color);
+  });
+
+  // 2. Draw stop markers + permanent labels
+  pts.forEach(function(pt, i) {
+    const rawLabel = (labels[i] || '').toString();
+    // Normalise newlines and <br> tags to a standard <br>
+    const normLabel = rawLabel.replace(/\\n/g, '<br>').replace(/<br\\s*\\/?>/gi, '<br>');
+    // First line only for the always-visible dot label (uncluttered)
+    const firstLine = normLabel.split('<br>')[0].replace(/<[^>]+>/g, '').trim();
+    // Full label with <br> rendered as line-breaks for the click popup
+    const popupHtml = normLabel.replace(/<br>/g, '<br>');
+    const radius = (sizes[i] && +sizes[i] > 0) ? Math.max(6, Math.min(30, +sizes[i])) : 10;
+
+    // Filled circle marker
+    const marker = L.circleMarker(pt, {
+      radius: radius,
+      color: '#ffffff', weight: 2,
+      fillColor: color, fillOpacity: 1,
+    }).addTo(map);
+
+    // Popup on click — shows full detail (type, location, date, actual/estimated)
+    if (popupHtml) {
+      marker.bindPopup('<div style="font-size:13px;line-height:1.8">' + popupHtml + '</div>');
+    }
+
+    // Permanent label above the dot — first line only (keeps the map uncluttered)
+    if (firstLine) {
+      const labelIcon = L.divIcon({
+        html: '<div class="stop-label">' + firstLine + '</div>',
+        className: '',
+        iconAnchor: [0, radius + 2],
+      });
+      L.marker(pt, { icon: labelIcon, interactive: false, zIndexOffset: 200 }).addTo(map);
+    }
+  });
+});
+
+// ── Fit bounds ─────────────────────────────────────────────────────────────
+const allPts = [
+  ...(MAP_DATA.routes || []).flatMap(function(r) { return r.points || []; }),
+  ...(MAP_DATA.zones  || []).flatMap(function(z) { return z.latlngs || []; }),
+];
+if (allPts.length > 0) {
+  try { map.fitBounds(L.latLngBounds(allPts), { padding: [60, 60], maxZoom: 12 }); }
+  catch(e) {}
+}
+} catch(e) {
+  var d = document.getElementById('map-error');
+  if (d) { d.style.display = 'block'; d.innerHTML = '<b>Map Error:</b> ' + e.message + '<br><pre>' + e.stack + '</pre>'; }
+}
+</script>
+</body>
+</html>
+"""
+
+
+def _plot_leaflet_map(
+    title: str,
+    data: dict[str, Any],
+    file_id: str,
+    title_slug: str,
+    file_store_path: str,
+) -> dict[str, Any]:
+    """Generate a Leaflet.js interactive map as a self-contained HTML file.
+
+    Supports: markers, bubbles (sized circle markers), route polylines,
+    directional arrow decorators, and filled polygon zone overlays.
+    """
+    import json as _json
+
+    MAX_MAP_POINTS = 1000
+    map_truncated = False
+
+    ROUTE_COLORS = [
+        "#E07B39", "#1F4788", "#2ECC71", "#E74C3C", "#9B59B6",
+        "#F39C12", "#1ABC9C", "#E91E63", "#00BCD4", "#8BC34A",
+    ]
+
+    arrows = data.get("arrows", False)
+    zones_raw = data.get("zones") or []
+
+    # ── groups → routes conversion ────────────────────────────────────────
+    # If caller passes flat lat/lon/labels + a "groups" array, auto-build
+    # the routes list so they don't have to construct nested objects.
+    groups_raw = data.get("groups")
+    if groups_raw and not data.get("routes"):
+        raw_lats   = [float(v) for v in (data.get("lat")    or [])]
+        raw_lons   = [float(v) for v in (data.get("lon")    or [])]
+        raw_labels = list(data.get("labels") or [str(i) for i in range(len(raw_lats))])
+        raw_sizes  = list(data.get("sizes")  or [])
+        # Preserve insertion order
+        seen: dict[str, dict] = {}
+        for idx, grp in enumerate(groups_raw):
+            grp = str(grp)
+            if grp not in seen:
+                seen[grp] = {"lat": [], "lon": [], "labels": [], "sizes": []}
+            if idx < len(raw_lats):
+                seen[grp]["lat"].append(raw_lats[idx])
+                seen[grp]["lon"].append(raw_lons[idx])
+                seen[grp]["labels"].append(raw_labels[idx] if idx < len(raw_labels) else "")
+                seen[grp]["sizes"].append(raw_sizes[idx] if idx < len(raw_sizes) else None)
+        routes_raw = [
+            {"name": grp, "lat": v["lat"], "lon": v["lon"],
+             "labels": v["labels"], "sizes": [s for s in v["sizes"] if s is not None]}
+            for grp, v in seen.items()
+        ]
+    else:
+        routes_raw = data.get("routes")
+
+    map_data: dict[str, Any] = {
+        "title": title,
+        "routes": [],
+        "zones": [],
+        "highlight_regions": [],
+        "arrows": arrows,
+    }
+
+    all_lats: list[float] = []
+    all_lons: list[float] = []
+
+    # ── Zones ────────────────────────────────────────────────────────────
+    for zone in zones_raw:
+        z_lats = zone.get("lat", [])
+        z_lons = zone.get("lon", [])
+        if not z_lats or not z_lons:
+            continue
+        map_data["zones"].append({
+            "name": zone.get("name", "Zone"),
+            "latlngs": [[float(la), float(lo)] for la, lo in zip(z_lats, z_lons)],
+            "color": zone.get("color", "rgba(255,0,0,0.25)"),
+        })
+
+    # ── Country / region highlights ──────────────────────────────────────
+    for region in data.get("highlight_regions", []):
+        map_data["highlight_regions"].append({
+            "name": region.get("name", ""),
+            "color": region.get("color", "rgba(31,71,136,0.25)"),
+        })
+
+    # ── Shared dedup helper ───────────────────────────────────────────────
+    def _dedup_route(lats, lons, labels, sizes):
+        """Collapse consecutive identical coordinates, keeping the longest label."""
+        d_lats: list[float] = []
+        d_lons: list[float] = []
+        d_labels: list[str] = []
+        d_sizes: list = []
+        for idx, (la, lo) in enumerate(zip(lats, lons)):
+            lbl = labels[idx] if idx < len(labels) else str(idx)
+            sz  = sizes[idx]  if idx < len(sizes)  else None
+            if d_lats and abs(la - d_lats[-1]) < 1e-6 and abs(lo - d_lons[-1]) < 1e-6:
+                # Same location as previous — append new label as extra line
+                d_labels[-1] = d_labels[-1] + "<br>" + lbl
+            else:
+                d_lats.append(la)
+                d_lons.append(lo)
+                d_labels.append(lbl)
+                d_sizes.append(sz)
+        return d_lats, d_lons, d_labels, [s for s in d_sizes if s is not None]
+
+    # ── Routes ───────────────────────────────────────────────────────────
+    if routes_raw:
+        points_used = 0
+        for i, route in enumerate(routes_raw):
+            if points_used >= MAX_MAP_POINTS:
+                map_truncated = True
+                break
+            r_lats = [float(v) for v in (route.get("lat") or [])]
+            r_lons = [float(v) for v in (route.get("lon") or [])]
+            r_labels = route.get("labels") or [str(j) for j in range(len(r_lats))]
+            r_name = route.get("name", f"Route {i + 1}")
+            r_connections = route.get("connections") or []
+            r_sizes = route.get("sizes") or []
+
+            remaining = MAX_MAP_POINTS - points_used
+            if len(r_lats) > remaining:
+                map_truncated = True
+            r_lats = r_lats[:remaining]
+            r_lons = r_lons[:remaining]
+            r_labels = r_labels[:remaining]
+
+            # Deduplicate consecutive identical coordinates within this route
+            r_lats, r_lons, r_labels, r_sizes = _dedup_route(r_lats, r_lons, r_labels, r_sizes)
+
+            # Rebuild connections for deduplicated points if not supplied
+            if (arrows or r_connections) and len(r_lats) > 1:
+                r_connections = [[j, j + 1] for j in range(len(r_lats) - 1)]
+
+            color = ROUTE_COLORS[i % len(ROUTE_COLORS)]
+            map_data["routes"].append({
+                "name": r_name,
+                "color": color,
+                "points": [[la, lo] for la, lo in zip(r_lats, r_lons)],
+                "labels": r_labels,
+                "connections": r_connections,
+                "sizes": r_sizes,
+            })
+            all_lats.extend(r_lats)
+            all_lons.extend(r_lons)
+            points_used += len(r_lats)
+    else:
+        import re as _re
+        raw_lats = [float(v) for v in (data.get("lat") or [])]
+        raw_lons = [float(v) for v in (data.get("lon") or [])]
+        if len(raw_lats) > MAX_MAP_POINTS:
+            map_truncated = True
+        lats = raw_lats[:MAX_MAP_POINTS]
+        lons = raw_lons[:MAX_MAP_POINTS]
+        labels = (data.get("labels") or [str(i) for i in range(len(lats))])[:MAX_MAP_POINTS]
+        values = data.get("values") or []
+        sizes  = data.get("sizes")  or []
+        groups_flat = data.get("groups") or []
+
+        # ── Auto-extract groups from label first line when groups not supplied ──
+        # Labels are expected to start with the group name (container/track number)
+        # followed by <br>.  E.g. "MSDU1234567<br>Houston<br>2026-02-09 (Actual)"
+        # Extract the first <br>-delimited segment as the group key.
+        if not groups_flat and labels:
+            # Try to extract container/tracking number from first <br> segment.
+            # A valid group key looks like a container number: 4 uppercase letters
+            # followed by 7 digits (e.g. GAOU6335790) or a tracking number.
+            _id_pat = _re.compile(r'^[A-Z]{2,6}[0-9]{4,12}$')
+            extracted = []
+            for lbl in labels:
+                norm = lbl.replace("\\n", "<br>").replace("\n", "<br>")
+                first = _re.split(r"<br\s*/?>", norm, maxsplit=1)[0].strip()
+                # Strip any HTML tags
+                first = _re.sub(r"<[^>]+>", "", first).strip()
+                extracted.append(first if first else "")
+            # Use extracted groups only when all non-empty values look like IDs
+            # (uppercase+digits) and there are multiple distinct values
+            valid = [g for g in extracted if g]
+            distinct = set(valid)
+            if len(distinct) > 1 and all(_id_pat.match(g) for g in valid):
+                groups_flat = extracted
+
+        if groups_flat and len(groups_flat) == len(lats):
+            # Build one route per unique group, preserving insertion order
+            import collections as _col
+            seen_grp: dict = _col.OrderedDict()
+            for idx, grp in enumerate(groups_flat):
+                grp = str(grp)
+                if grp not in seen_grp:
+                    seen_grp[grp] = {"lat": [], "lon": [], "labels": [], "sizes": []}
+                if idx < len(lats):
+                    seen_grp[grp]["lat"].append(lats[idx])
+                    seen_grp[grp]["lon"].append(lons[idx])
+                    seen_grp[grp]["labels"].append(labels[idx] if idx < len(labels) else "")
+                    seen_grp[grp]["sizes"].append(sizes[idx] if idx < len(sizes) else None)
+
+            for gi, (grp_name, gdata) in enumerate(seen_grp.items()):
+                g_lats, g_lons, g_lbls, g_sizes = _dedup_route(
+                    gdata["lat"], gdata["lon"], gdata["labels"],
+                    [s for s in gdata["sizes"] if s is not None],
+                )
+                g_conn = [[j, j + 1] for j in range(len(g_lats) - 1)] if len(g_lats) > 1 else []
+                color = ROUTE_COLORS[gi % len(ROUTE_COLORS)]
+                map_data["routes"].append({
+                    "name": grp_name,
+                    "color": color,
+                    "points": [[la, lo] for la, lo in zip(g_lats, g_lons)],
+                    "labels": g_lbls,
+                    "connections": g_conn,
+                    "sizes": g_sizes,
+                })
+                all_lats.extend(g_lats)
+                all_lons.extend(g_lons)
+        else:
+            # Single route — deduplicate consecutive identical coordinates
+            dedup_lats: list[float] = []
+            dedup_lons: list[float] = []
+            dedup_labels: list[str] = []
+            dedup_sizes: list = []
+            for i, (la, lo) in enumerate(zip(lats, lons)):
+                lbl = labels[i] if i < len(labels) else str(i)
+                sz  = sizes[i]  if i < len(sizes)  else None
+                if dedup_lats and abs(la - dedup_lats[-1]) < 1e-6 and abs(lo - dedup_lons[-1]) < 1e-6:
+                    if len(lbl) > len(dedup_labels[-1]):
+                        dedup_labels[-1] = lbl
+                else:
+                    dedup_lats.append(la); dedup_lons.append(lo)
+                    dedup_labels.append(lbl); dedup_sizes.append(sz)
+
+            lats, lons, labels = dedup_lats, dedup_lons, dedup_labels
+            sizes = [s for s in dedup_sizes if s is not None]
+            connections = data.get("connections") or []
+            if arrows and not connections and len(lats) > 1:
+                connections = [[i, i + 1] for i in range(len(lats) - 1)]
+            if values and len(values) >= len(lats):
+                labels = [f"{lb}<br>{v}" for lb, v in zip(labels, values)]
+            map_data["routes"].append({
+                "name": "",
+                "color": ROUTE_COLORS[0],
+                "points": [[la, lo] for la, lo in zip(lats, lons)],
+                "labels": labels,
+                "connections": connections,
+                "sizes": sizes,
+            })
+            all_lats.extend(lats)
+            all_lons.extend(lons)
+
+    # ── Centre / zoom ────────────────────────────────────────────────────
+    if all_lats:
+        center_lat = sum(all_lats) / len(all_lats)
+        center_lon = sum(all_lons) / len(all_lons)
+        spread = max(
+            max(all_lats) - min(all_lats),
+            max(all_lons) - min(all_lons),
+        )
+        zoom = 12 if spread < 0.5 else 9 if spread < 2 else 6 if spread < 10 else 4 if spread < 40 else 3 if spread < 100 else 2
+    else:
+        center_lat, center_lon, zoom = 20.0, 0.0, 2
+
+    data_json = _json.dumps(map_data)
+
+    # ── HTML template (uses ||| placeholders to avoid f-string conflicts) ─
+    # Embed Leaflet CSS + JS inline so the map works without any CDN/internet.
+    _vendor_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+    try:
+        with open(os.path.join(_vendor_dir, "leaflet.css"), encoding="utf-8") as _f:
+            _leaflet_css = _f.read()
+        with open(os.path.join(_vendor_dir, "leaflet.js"), encoding="utf-8") as _f:
+            _leaflet_js = _f.read()
+        with open(os.path.join(_vendor_dir, "topojson-client.min.js"), encoding="utf-8") as _f:
+            _topojson_js = _f.read()
+        _inline_head = (
+            f"<style>\n{_leaflet_css}\n</style>\n"
+            f"<script>\n{_leaflet_js}\n</script>\n"
+            f"<script>\n{_topojson_js}\n</script>"
+        )
+        _cdn_tags = (
+            '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>\n'
+            '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>\n'
+            '<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>'
+        )
+    except Exception:
+        _inline_head = None
+
+    html = _LEAFLET_MAP_HTML
+    if _inline_head:
+        html = html.replace(_cdn_tags, _inline_head)
+    html = html.replace("|||TITLE|||", title)
+    html = html.replace("|||DATA_JSON|||", data_json)
+    html = html.replace("|||CENTER_LAT|||", str(round(center_lat, 6)))
+    html = html.replace("|||CENTER_LON|||", str(round(center_lon, 6)))
+    html = html.replace("|||ZOOM|||", str(zoom))
+
+    filename = f"{file_id}_{title_slug}.html"
+    full_path = os.path.join(file_store_path, filename)
+    with open(full_path, "w", encoding="utf-8") as fh:
+        fh.write(html)
+
+    meta = _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
+    meta["map_truncated"] = map_truncated
+    return meta
 
 
 # -- interactive (plotly) ---------------------------------------------------
@@ -416,216 +1051,27 @@ def _plot_interactive(
             data=[go.Histogram(x=values, marker_color=HEADER_COLOR_HEX)]
         )
 
-    elif plot_type == "map":
-        import math
-
-        # ── Shared Mercator helpers ───────────────────────────────────
-        def _merc_y(lat_deg: float) -> float:
-            lr = math.radians(lat_deg)
-            return math.degrees(math.log(math.tan(math.pi / 4 + lr / 2)))
-
-        def _inv_merc_y(y: float) -> float:
-            return math.degrees(
-                2 * math.atan(math.exp(math.radians(y))) - math.pi / 2
-            )
-
-        def _add_route_traces(
-            traces: list[Any],
-            lats: list[float],
-            lons: list[float],
-            hover_text: list[str],
-            connections: list[list[int]],
-            color: str,
-            name: str,
-            show_legend: bool,
-        ) -> None:
-            """Append line + arrowhead + marker traces for one route."""
-            if connections:
-                for from_idx, to_idx in connections:
-                    if from_idx >= len(lats) or to_idx >= len(lats):
-                        continue
-                    traces.append(go.Scattermapbox(
-                        lat=[lats[from_idx], lats[to_idx]],
-                        lon=[lons[from_idx], lons[to_idx]],
-                        mode="lines",
-                        line=dict(width=2, color=color),
-                        hoverinfo="skip",
-                        showlegend=False,
-                    ))
-                    mx1, my1 = lons[from_idx], _merc_y(lats[from_idx])
-                    mx2, my2 = lons[to_idx],   _merc_y(lats[to_idx])
-                    dx, dy = mx2 - mx1, my2 - my1
-                    seg_m = math.sqrt(dx * dx + dy * dy)
-                    if seg_m < 1e-10:
-                        continue
-                    ux, uy = dx / seg_m, dy / seg_m
-                    mid_mx = (mx1 + mx2) / 2
-                    mid_my = (my1 + my2) / 2
-                    mid_lat_m = _inv_merc_y(mid_my)
-                    arrow_size = max(seg_m * 0.05, 0.003)
-                    c150 = math.cos(math.radians(150))
-                    s150 = math.sin(math.radians(150))
-                    wl_mx = mid_mx + arrow_size * (ux * c150 - uy * s150)
-                    wl_my = mid_my + arrow_size * (ux * s150 + uy * c150)
-                    wr_mx = mid_mx + arrow_size * (ux * c150 + uy * s150)
-                    wr_my = mid_my + arrow_size * (-ux * s150 + uy * c150)
-                    traces.append(go.Scattermapbox(
-                        lat=[_inv_merc_y(wl_my), mid_lat_m, _inv_merc_y(wr_my)],
-                        lon=[wl_mx, mid_mx, wr_mx],
-                        mode="lines",
-                        line=dict(width=2, color=color),
-                        hoverinfo="skip",
-                        showlegend=False,
-                    ))
-
-            traces.append(go.Scattermapbox(
-                lat=lats,
-                lon=lons,
-                mode="markers",
-                marker=go.scattermapbox.Marker(size=10, color=color, opacity=0.9),
-                text=hover_text,
-                hoverinfo="text",
-                name=name,
-                showlegend=show_legend,
-            ))
-
-        # ── Multi-route path ─────────────────────────────────────────
-        ROUTE_COLORS = [
-            "#E07B39", "#1F4788", "#2ECC71", "#E74C3C", "#9B59B6",
+    elif plot_type == "bar_stacked":
+        PALETTE = [
+            "#1F4788", "#E07B39", "#2ECC71", "#E74C3C", "#9B59B6",
             "#F39C12", "#1ABC9C", "#E91E63", "#00BCD4", "#8BC34A",
         ]
-
-        # Hard cap: never render more than 1000 points on a map to avoid
-        # token overflow and browser performance issues.
-        MAX_MAP_POINTS = 1000
-
-        routes = data.get("routes")
-        arrows = data.get("arrows", False)
-        traces: list[Any] = []
-        all_lats: list[float] = []
-        all_lons: list[float] = []
-
-        # ── Zone polygon overlays (rendered first so they sit under points) ─
-        zones = data.get("zones", [])
-        for zone in zones:
-            z_lats = zone.get("lat", [])
-            z_lons = zone.get("lon", [])
-            z_name = zone.get("name", "Zone")
-            z_color = zone.get("color", "rgba(255,0,0,0.25)")
-            if not z_lats or not z_lons:
-                continue
-            # Derive a solid border color from the fill color
-            border_color = z_color.replace("0.25)", "0.7)").replace("0.2)", "0.7)")
-            traces.append(go.Scattermapbox(
-                lat=z_lats,
-                lon=z_lons,
-                mode="lines",
-                fill="toself",
-                fillcolor=z_color,
-                line=dict(width=2, color=border_color),
-                name=z_name,
-                hoverinfo="name",
-                showlegend=True,
+        series_list = data.get("series", [])
+        traces = []
+        for idx, s in enumerate(series_list):
+            traces.append(go.Bar(
+                name=s.get("name", f"Series {idx + 1}"),
+                x=labels,
+                y=s.get("values", []),
+                marker_color=PALETTE[idx % len(PALETTE)],
             ))
-
-        map_truncated = False
-
-        if routes:
-            # Multiple containers → one colored route per container
-            points_used = 0
-            total_input_points = sum(len(r.get("lat", [])) for r in routes)
-            for i, route in enumerate(routes):
-                if points_used >= MAX_MAP_POINTS:
-                    map_truncated = True
-                    break
-                r_lats = route.get("lat", [])
-                r_lons = route.get("lon", [])
-                r_labels = route.get("labels", [str(j) for j in range(len(r_lats))])
-                r_name = route.get("name", f"Route {i+1}")
-                r_connections = route.get("connections", [])
-                # Cap this route's points to stay within the overall budget
-                remaining = MAX_MAP_POINTS - points_used
-                if len(r_lats) > remaining:
-                    map_truncated = True
-                r_lats = r_lats[:remaining]
-                r_lons = r_lons[:remaining]
-                r_labels = r_labels[:remaining]
-                if arrows and not r_connections and len(r_lats) > 1:
-                    r_connections = [[j, j + 1] for j in range(len(r_lats) - 1)]
-                color = ROUTE_COLORS[i % len(ROUTE_COLORS)]
-                _add_route_traces(
-                    traces, r_lats, r_lons, r_labels,
-                    r_connections, color, r_name, show_legend=True,
-                )
-                all_lats.extend(r_lats)
-                all_lons.extend(r_lons)
-                points_used += len(r_lats)
-            if total_input_points > MAX_MAP_POINTS:
-                map_truncated = True
-        else:
-            # Single-route (legacy) path
-            raw_lats = data.get("lat", [])
-            raw_lons = data.get("lon", [])
-            if len(raw_lats) > MAX_MAP_POINTS:
-                map_truncated = True
-            lats = raw_lats[:MAX_MAP_POINTS]
-            lons = raw_lons[:MAX_MAP_POINTS]
-            map_labels = data.get("labels", [str(i) for i in range(len(lats))])[:MAX_MAP_POINTS]
-            map_values = data.get("values", [])
-            connections = data.get("connections", [])
-            if arrows and not connections and len(lats) > 1:
-                connections = [[i, i + 1] for i in range(len(lats) - 1)]
-            if map_values and len(map_values) >= len(lats):
-                hover_text = [f"{lbl}<br>{val}" for lbl, val in zip(map_labels, map_values)]
-            else:
-                hover_text = list(map_labels)
-            _add_route_traces(
-                traces, lats, lons, hover_text,
-                connections, "#E07B39", "", show_legend=False,
-            )
-            all_lats.extend(lats)
-            all_lons.extend(lons)
-
         fig = go.Figure(data=traces)
+        fig.update_layout(barmode="stack")
 
-        center_lat = (sum(all_lats) / len(all_lats)) if all_lats else 20.0
-        center_lon = (sum(all_lons) / len(all_lons)) if all_lons else 0.0
-
-        if all_lats:
-            spread = max(max(all_lats) - min(all_lats), max(all_lons) - min(all_lons))
-            if spread < 2:
-                zoom = 8
-            elif spread < 10:
-                zoom = 5
-            elif spread < 40:
-                zoom = 3
-            else:
-                zoom = 1
-        else:
-            zoom = 2
-
-        fig.update_layout(
-            title=dict(text=title, font=dict(size=16)),
-            mapbox=dict(
-                style="carto-positron",
-                center=dict(lat=center_lat, lon=center_lon),
-                zoom=zoom,
-            ),
-            legend=dict(
-                bgcolor="rgba(255,255,255,0.85)",
-                bordercolor="#ccc",
-                borderwidth=1,
-            ),
-            margin=dict(l=0, r=0, t=50, b=0),
-            height=550,
+    elif plot_type == "map":
+        return _plot_leaflet_map(
+            title, data, file_id, title_slug, file_store_path,
         )
-
-        filename = f"{file_id}_{title_slug}.html"
-        full_path = os.path.join(file_store_path, filename)
-        fig.write_html(full_path, include_plotlyjs=True, config={"scrollZoom": True})
-        meta = _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
-        meta["map_truncated"] = map_truncated
-        return meta
 
     else:
         return {"error": f"Unsupported plot_type: {plot_type}"}

@@ -97,7 +97,6 @@ function ArtifactEmbed({ fileId, filename, fileType, url, downloadUrl, sizeBytes
             className="artifact-iframe"
             style={{ height: iframeHeight }}
             frameBorder="0"
-            loading="lazy"
             allowFullScreen
           />
         )}

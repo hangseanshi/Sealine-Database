@@ -26,8 +26,6 @@ from dotenv import load_dotenv
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(_project_root, ".env"), override=True)
 
-import anthropic
-import httpx
 from flask import Flask, send_from_directory
 
 from server.config import get_config
@@ -92,17 +90,11 @@ def create_app() -> Flask:
         "Loaded %d context file(s) from %s", len(context_files), memory_dir
     )
 
-    # --- Anthropic client (shared, with SSL bypass) ---
-    anthropic_client = anthropic.Anthropic(
-        http_client=httpx.Client(verify=False),
-    )
-
     # --- Store shared resources on app for access by routes ---
     # Flask config dict (standard pattern)
     app.config["SESSION_STORE"] = session_store
     app.config["CONTEXT_TEXT"] = context_text
     app.config["CONTEXT_FILES"] = context_files
-    app.config["ANTHROPIC_CLIENT"] = anthropic_client
     app.config["FILE_STORE_PATH"] = file_store_path
     app.config["SEALINE_CONFIG"] = cfg
 
@@ -126,6 +118,15 @@ def create_app() -> Flask:
 
     # Initialise health check baseline timestamp
     init_health()
+
+    # --- Serve vendor assets (Leaflet, TopoJSON, etc.) at /api/vendor/ ---
+    # Stored in server/core/vendor/ so they survive `vite build --emptyOutDir`.
+    # Using /api/vendor/ means the existing Vite proxy (/api → :8080) works in dev.
+    _vendor_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "vendor")
+
+    @app.route("/api/vendor/<path:filename>")
+    def serve_vendor(filename: str):
+        return send_from_directory(_vendor_dir, filename)
 
     # --- Serve React frontend ---
     @app.route("/")
