@@ -23,6 +23,8 @@ function InputBar({ onSend, isLoading, disabled }) {
   const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef(null);
   const recognitionRef = useRef(null);
+  const historyRef = useRef([]);      // sent messages, oldest→newest
+  const historyIdxRef = useRef(-1);   // -1 = not navigating
 
   // Auto-resize the textarea based on content
   const adjustHeight = useCallback(() => {
@@ -36,6 +38,22 @@ function InputBar({ onSend, isLoading, disabled }) {
     adjustHeight();
   }, [text, adjustHeight]);
 
+  // Focus on mount
+  useEffect(() => {
+    if (textareaRef.current && !disabled) {
+      textareaRef.current.focus();
+    }
+  }, [disabled]);
+
+  // Re-focus after response finishes streaming
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    if (prevLoadingRef.current && !isLoading && !disabled) {
+      textareaRef.current?.focus();
+    }
+    prevLoadingRef.current = isLoading;
+  }, [isLoading, disabled]);
+
   // Cleanup recognition on unmount
   useEffect(() => {
     return () => {
@@ -48,6 +66,12 @@ function InputBar({ onSend, isLoading, disabled }) {
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed || isLoading || disabled) return;
+    // Push to history (avoid duplicate consecutive entries)
+    const hist = historyRef.current;
+    if (hist[hist.length - 1] !== trimmed) {
+      hist.push(trimmed);
+    }
+    historyIdxRef.current = -1;
     onSend(trimmed);
     setText('');
     // Reset textarea height after clearing
@@ -61,9 +85,37 @@ function InputBar({ onSend, isLoading, disabled }) {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         handleSend();
+        return;
+      }
+
+      const hist = historyRef.current;
+      if (!hist.length) return;
+
+      if (e.key === 'ArrowUp') {
+        // Only navigate history when cursor is on the first line
+        const textarea = textareaRef.current;
+        if (textarea && textarea.selectionStart !== 0 && text.includes('\n')) return;
+        e.preventDefault();
+        const nextIdx =
+          historyIdxRef.current === -1
+            ? hist.length - 1
+            : Math.max(0, historyIdxRef.current - 1);
+        historyIdxRef.current = nextIdx;
+        setText(hist[nextIdx]);
+      } else if (e.key === 'ArrowDown') {
+        if (historyIdxRef.current === -1) return;
+        e.preventDefault();
+        const nextIdx = historyIdxRef.current + 1;
+        if (nextIdx >= hist.length) {
+          historyIdxRef.current = -1;
+          setText('');
+        } else {
+          historyIdxRef.current = nextIdx;
+          setText(hist[nextIdx]);
+        }
       }
     },
-    [handleSend]
+    [handleSend, text]
   );
 
   const handleChange = useCallback((e) => {

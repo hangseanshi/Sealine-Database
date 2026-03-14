@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 # Load .env before anything reads os.environ (Anthropic client, config, etc.)
 # Use explicit path so it works regardless of cwd (e.g. preview servers).
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-load_dotenv(os.path.join(_project_root, ".env"))
+load_dotenv(os.path.join(_project_root, ".env"), override=True)
 
 import anthropic
 import httpx

@@ -68,14 +68,21 @@ GENERATE_PLOT_TOOL: dict[str, Any] = {
                     'For scatter: {"x": [...], "y": [...]}. '
                     'For pie: {"labels": [...], "values": [...]}. '
                     'For heatmap: {"labels_x": [...], "labels_y": [...], "values": [[...]]}. '
-                    'For map: {"lat": [...], "lon": [...], "labels": [...], '
+                    'For map with a SINGLE route: {"lat": [...], "lon": [...], "labels": [...], '
                     '"values": [...], "arrows": true/false, '
                     '"connections": [[from_idx, to_idx], ...]} '
                     'where labels are hover text (e.g. container ID), '
                     'values are optional numeric values shown on hover, '
                     '"arrows": true auto-connects points in sequence with directional arrows, '
                     '"connections" explicitly defines which point pairs to connect with arrows '
-                    '(e.g. [[0,1],[1,2]] draws arrows from point 0→1 and 1→2).'
+                    '(e.g. [[0,1],[1,2]] draws arrows from point 0→1 and 1→2). '
+                    'For map with MULTIPLE containers/routes (ALWAYS use this when showing '
+                    'routes for more than one container — do NOT call generate_plot separately '
+                    'for each container): '
+                    '{"routes": [{"name": "CONTAINER_ID", "lat": [...], "lon": [...], '
+                    '"labels": [...], "connections": [[0,1],[1,2]]}, ...], "arrows": true} '
+                    'Each route gets a distinct color automatically. '
+                    '"labels" per point are hover text (e.g. port name + date).'
                 ),
             },
             "interactive": {
@@ -404,135 +411,132 @@ def _plot_interactive(
     elif plot_type == "map":
         import math
 
-        lats = data.get("lat", [])
-        lons = data.get("lon", [])
-        map_labels = data.get("labels", [str(i) for i in range(len(lats))])
-        map_values = data.get("values", [])
-        # connections: list of [from_idx, to_idx] pairs, OR True to auto-connect in order
-        connections = data.get("connections", [])
+        # ── Shared Mercator helpers ───────────────────────────────────
+        def _merc_y(lat_deg: float) -> float:
+            lr = math.radians(lat_deg)
+            return math.degrees(math.log(math.tan(math.pi / 4 + lr / 2)))
+
+        def _inv_merc_y(y: float) -> float:
+            return math.degrees(
+                2 * math.atan(math.exp(math.radians(y))) - math.pi / 2
+            )
+
+        def _add_route_traces(
+            traces: list[Any],
+            lats: list[float],
+            lons: list[float],
+            hover_text: list[str],
+            connections: list[list[int]],
+            color: str,
+            name: str,
+            show_legend: bool,
+        ) -> None:
+            """Append line + arrowhead + marker traces for one route."""
+            if connections:
+                for from_idx, to_idx in connections:
+                    if from_idx >= len(lats) or to_idx >= len(lats):
+                        continue
+                    traces.append(go.Scattermapbox(
+                        lat=[lats[from_idx], lats[to_idx]],
+                        lon=[lons[from_idx], lons[to_idx]],
+                        mode="lines",
+                        line=dict(width=2, color=color),
+                        hoverinfo="skip",
+                        showlegend=False,
+                    ))
+                    mx1, my1 = lons[from_idx], _merc_y(lats[from_idx])
+                    mx2, my2 = lons[to_idx],   _merc_y(lats[to_idx])
+                    dx, dy = mx2 - mx1, my2 - my1
+                    seg_m = math.sqrt(dx * dx + dy * dy)
+                    if seg_m < 1e-10:
+                        continue
+                    ux, uy = dx / seg_m, dy / seg_m
+                    mid_mx = (mx1 + mx2) / 2
+                    mid_my = (my1 + my2) / 2
+                    mid_lat_m = _inv_merc_y(mid_my)
+                    arrow_size = max(seg_m * 0.05, 0.003)
+                    c150 = math.cos(math.radians(150))
+                    s150 = math.sin(math.radians(150))
+                    wl_mx = mid_mx + arrow_size * (ux * c150 - uy * s150)
+                    wl_my = mid_my + arrow_size * (ux * s150 + uy * c150)
+                    wr_mx = mid_mx + arrow_size * (ux * c150 + uy * s150)
+                    wr_my = mid_my + arrow_size * (-ux * s150 + uy * c150)
+                    traces.append(go.Scattermapbox(
+                        lat=[_inv_merc_y(wl_my), mid_lat_m, _inv_merc_y(wr_my)],
+                        lon=[wl_mx, mid_mx, wr_mx],
+                        mode="lines",
+                        line=dict(width=2, color=color),
+                        hoverinfo="skip",
+                        showlegend=False,
+                    ))
+
+            traces.append(go.Scattermapbox(
+                lat=lats,
+                lon=lons,
+                mode="markers",
+                marker=go.scattermapbox.Marker(size=10, color=color, opacity=0.9),
+                text=hover_text,
+                hoverinfo="text",
+                name=name,
+                showlegend=show_legend,
+            ))
+
+        # ── Multi-route path ─────────────────────────────────────────
+        ROUTE_COLORS = [
+            "#E07B39", "#1F4788", "#2ECC71", "#E74C3C", "#9B59B6",
+            "#F39C12", "#1ABC9C", "#E91E63", "#00BCD4", "#8BC34A",
+        ]
+
+        routes = data.get("routes")
         arrows = data.get("arrows", False)
-
-        # Auto-connect consecutive points when arrows=True and no explicit connections
-        if arrows and not connections and len(lats) > 1:
-            connections = [[i, i + 1] for i in range(len(lats) - 1)]
-
-        # Build hover text
-        if map_values and len(map_values) == len(lats):
-            hover_text = [f"{lbl}<br>{val}" for lbl, val in zip(map_labels, map_values)]
-        else:
-            hover_text = list(map_labels)
-
         traces: list[Any] = []
+        all_lats: list[float] = []
+        all_lons: list[float] = []
 
-        # ── Arrow lines & arrowheads ──────────────────────────────────
-        def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-            """Return compass bearing (degrees) from point 1 → point 2."""
-            rlat1, rlon1, rlat2, rlon2 = map(math.radians, [lat1, lon1, lat2, lon2])
-            dlon = rlon2 - rlon1
-            x = math.sin(dlon) * math.cos(rlat2)
-            y = math.cos(rlat1) * math.sin(rlat2) - math.sin(rlat1) * math.cos(rlat2) * math.cos(dlon)
-            return (math.degrees(math.atan2(x, y)) + 360) % 360
-
-        if connections:
-            # Draw one line trace per connection (allows per-line styling)
-            for from_idx, to_idx in connections:
-                if from_idx >= len(lats) or to_idx >= len(lats):
-                    continue
-                # Line segment
-                traces.append(go.Scattermapbox(
-                    lat=[lats[from_idx], lats[to_idx]],
-                    lon=[lons[from_idx], lons[to_idx]],
-                    mode="lines",
-                    line=dict(width=2, color="#E07B39"),
-                    hoverinfo="skip",
-                    showlegend=False,
-                ))
-                # Arrowhead: ">" centred at the midpoint of the segment.
-                # All geometry is done in Mercator (lon, merc_y) space because
-                # Mercator is conformal — angles in that space match visual
-                # angles on screen, unlike raw lat/lon or compass bearings.
-                def _merc_y(lat_deg: float) -> float:
-                    # Returns Mercator Y scaled to degrees so that X (lon °)
-                    # and Y share the same linear scale → angles are correct.
-                    lr = math.radians(lat_deg)
-                    return math.degrees(math.log(math.tan(math.pi / 4 + lr / 2)))
-
-                def _inv_merc_y(y: float) -> float:
-                    return math.degrees(
-                        2 * math.atan(math.exp(math.radians(y))) - math.pi / 2
-                    )
-
-                mx1 = lons[from_idx];  my1 = _merc_y(lats[from_idx])
-                mx2 = lons[to_idx];    my2 = _merc_y(lats[to_idx])
-                dx, dy = mx2 - mx1, my2 - my1
-                seg_m = math.sqrt(dx * dx + dy * dy)
-                if seg_m < 1e-10:
-                    continue  # skip zero-length segments
-
-                # Unit forward vector in Mercator space
-                ux, uy = dx / seg_m, dy / seg_m
-
-                # Midpoint in Mercator space
-                mid_mx = (mx1 + mx2) / 2
-                mid_my = (my1 + my2) / 2
-                mid_lat_m = _inv_merc_y(mid_my)
-
-                # Wing size: 5 % of Mercator segment length, min 0.003 units
-                arrow_size = max(seg_m * 0.05, 0.003)
-
-                # Rotate forward vector by +150° and −150° to get wing directions.
-                # Standard 2-D rotation: new = R(θ) · (ux, uy)
-                c150 = math.cos(math.radians(150))   # −√3/2
-                s150 = math.sin(math.radians(150))   #  1/2
-                wl_mx = mid_mx + arrow_size * (ux * c150 - uy * s150)
-                wl_my = mid_my + arrow_size * (ux * s150 + uy * c150)
-                wr_mx = mid_mx + arrow_size * (ux * c150 + uy * s150)
-                wr_my = mid_my + arrow_size * (-ux * s150 + uy * c150)
-
-                # Draw: left-wing → tip(midpoint) → right-wing
-                traces.append(go.Scattermapbox(
-                    lat=[_inv_merc_y(wl_my), mid_lat_m, _inv_merc_y(wr_my)],
-                    lon=[wl_mx, mid_mx, wr_mx],
-                    mode="lines",
-                    line=dict(width=2, color="#E07B39"),
-                    hoverinfo="skip",
-                    showlegend=False,
-                ))
-
-        # ── Location dot markers ──────────────────────────────────────
-        marker_cfg: dict[str, Any] = {"size": 12}
-        if map_values and len(map_values) == len(lats):
-            marker_cfg.update({
-                "color": map_values,
-                "colorscale": "Viridis",
-                "showscale": True,
-                "colorbar": {"title": "Value"},
-                "opacity": 0.9,
-            })
+        if routes:
+            # Multiple containers → one colored route per container
+            for i, route in enumerate(routes):
+                r_lats = route.get("lat", [])
+                r_lons = route.get("lon", [])
+                r_labels = route.get("labels", [str(j) for j in range(len(r_lats))])
+                r_name = route.get("name", f"Route {i+1}")
+                r_connections = route.get("connections", [])
+                if arrows and not r_connections and len(r_lats) > 1:
+                    r_connections = [[j, j + 1] for j in range(len(r_lats) - 1)]
+                color = ROUTE_COLORS[i % len(ROUTE_COLORS)]
+                _add_route_traces(
+                    traces, r_lats, r_lons, r_labels,
+                    r_connections, color, r_name, show_legend=True,
+                )
+                all_lats.extend(r_lats)
+                all_lons.extend(r_lons)
         else:
-            marker_cfg.update({"color": HEADER_COLOR_HEX, "opacity": 0.9})
-
-        traces.append(go.Scattermapbox(
-            lat=lats,
-            lon=lons,
-            mode="markers+text",
-            marker=go.scattermapbox.Marker(**marker_cfg),
-            text=hover_text,
-            hoverinfo="text",
-            showlegend=False,
-        ))
+            # Single-route (legacy) path
+            lats = data.get("lat", [])
+            lons = data.get("lon", [])
+            map_labels = data.get("labels", [str(i) for i in range(len(lats))])
+            map_values = data.get("values", [])
+            connections = data.get("connections", [])
+            if arrows and not connections and len(lats) > 1:
+                connections = [[i, i + 1] for i in range(len(lats) - 1)]
+            if map_values and len(map_values) == len(lats):
+                hover_text = [f"{lbl}<br>{val}" for lbl, val in zip(map_labels, map_values)]
+            else:
+                hover_text = list(map_labels)
+            _add_route_traces(
+                traces, lats, lons, hover_text,
+                connections, "#E07B39", "", show_legend=False,
+            )
+            all_lats.extend(lats)
+            all_lons.extend(lons)
 
         fig = go.Figure(data=traces)
 
-        # Auto-centre on the data's centroid; fall back if lists are empty
-        center_lat = (sum(lats) / len(lats)) if lats else 20.0
-        center_lon = (sum(lons) / len(lons)) if lons else 0.0
+        center_lat = (sum(all_lats) / len(all_lats)) if all_lats else 20.0
+        center_lon = (sum(all_lons) / len(all_lons)) if all_lons else 0.0
 
-        # Pick zoom based on spread
-        if lats:
-            lat_range = max(lats) - min(lats)
-            lon_range = max(lons) - min(lons)
-            spread = max(lat_range, lon_range)
+        if all_lats:
+            spread = max(max(all_lats) - min(all_lats), max(all_lons) - min(all_lons))
             if spread < 2:
                 zoom = 8
             elif spread < 10:
@@ -550,6 +554,11 @@ def _plot_interactive(
                 style="open-street-map",
                 center=dict(lat=center_lat, lon=center_lon),
                 zoom=zoom,
+            ),
+            legend=dict(
+                bgcolor="rgba(255,255,255,0.85)",
+                bordercolor="#ccc",
+                borderwidth=1,
             ),
             margin=dict(l=0, r=0, t=50, b=0),
             height=550,
