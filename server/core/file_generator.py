@@ -524,8 +524,9 @@ function toHex(r,g,b) {
 }
 
 // ── Pure-Leaflet arrow line (no plugin needed) ────────────────────────────
-function drawArrowLine(fromPt, toPt, color) {
+function drawArrowLine(fromPt, toPt, color, laneOffset) {
   // Pure Mercator math — no dependency on map state (avoids NaN from map.project)
+  laneOffset = laneOffset || 0;
   var WSIZ = 1024; // world pixels at zoom 2 (256 * 2^2)
   function merc(lat, lon) {
     var s = Math.sin(lat * Math.PI / 180);
@@ -542,11 +543,16 @@ function drawArrowLine(fromPt, toPt, color) {
   var p1 = merc(fromPt[0], fromPt[1]);
   var p2 = merc(toPt[0],   toPt[1]);
   var dx = p2.x - p1.x, dy = p2.y - p1.y;
-  var pixChord = Math.sqrt(dx * dx + dy * dy);
+  var pixChord = Math.sqrt(dx * dx + dy * dy) || 1;
 
-  // Control point: push midpoint northward by 15% of pixel chord, min 40px
+  // Perpendicular unit vector (left of route direction) for lane separation
+  var perpX = -dy / pixChord;
+  var perpY =  dx / pixChord;
+
+  // Control point: northward by 15% of chord + lateral lane offset for parallel routes
   var pxOffset = Math.max(40, pixChord * 0.15);
-  var ctrl     = unmerc(p1.x + dx / 2, p1.y + dy / 2 - pxOffset);
+  var ctrl     = unmerc(p1.x + dx / 2 + perpX * laneOffset,
+                        p1.y + dy / 2 - pxOffset + perpY * laneOffset);
   var ctrlLat  = Math.min(85, Math.max(-85, ctrl.lat));
   var ctrlLon  = ctrl.lng;
 
@@ -666,10 +672,11 @@ MAP_DATA.routes.forEach(function(route) {
   if (!pts || pts.length === 0) return;
 
   // 1. Draw lines with arrow markers
-  connections.forEach(function(conn) {
+  const laneOffsets = route.lane_offsets || [];
+  connections.forEach(function(conn, ci) {
     const fi = conn[0], ti = conn[1];
     if (fi >= pts.length || ti >= pts.length) return;
-    drawArrowLine(pts[fi], pts[ti], color);
+    drawArrowLine(pts[fi], pts[ti], color, laneOffsets[ci] || 0);
   });
 
   // 2. Draw stop markers + permanent labels
@@ -890,7 +897,7 @@ def _plot_leaflet_map(
             # Try to extract container/tracking number from first <br> segment.
             # A valid group key looks like a container number: 4 uppercase letters
             # followed by 7 digits (e.g. GAOU6335790) or a tracking number.
-            _id_pat = _re.compile(r'^[A-Z]{2,6}[0-9]{4,12}$')
+            _id_pat = _re.compile(r'^[A-Z0-9]{4,20}$')
             extracted = []
             for lbl in labels:
                 norm = lbl.replace("\\n", "<br>").replace("\n", "<br>")
@@ -969,6 +976,29 @@ def _plot_leaflet_map(
             })
             all_lats.extend(lats)
             all_lons.extend(lons)
+
+    # ── Lane offsets: separate parallel connections so they don't overlap ──
+    # Two connections are "parallel" when their rounded endpoint coords match.
+    # We spread them apart by ±LANE_PX pixels perpendicular to the route.
+    _LANE_PX = 38
+    _conn_reg: dict = {}
+    for _ri, _route in enumerate(map_data["routes"]):
+        _pts = _route["points"]
+        for _ci, _conn in enumerate(_route.get("connections", [])):
+            _fi, _ti = _conn[0], _conn[1]
+            if _fi < len(_pts) and _ti < len(_pts):
+                _fk = (round(_pts[_fi][0], 2), round(_pts[_fi][1], 2))
+                _tk = (round(_pts[_ti][0], 2), round(_pts[_ti][1], 2))
+                _conn_reg.setdefault((_fk, _tk), []).append((_ri, _ci))
+    _offsets: dict = {_ri: [0] * len(_r.get("connections", []))
+                      for _ri, _r in enumerate(map_data["routes"])}
+    for _occs in _conn_reg.values():
+        _n = len(_occs)
+        if _n > 1:
+            for _i, (_ri, _ci) in enumerate(_occs):
+                _offsets[_ri][_ci] = (_i - (_n - 1) / 2.0) * _LANE_PX
+    for _ri, _route in enumerate(map_data["routes"]):
+        _route["lane_offsets"] = _offsets[_ri]
 
     # ── Centre / zoom ────────────────────────────────────────────────────
     if all_lats:
