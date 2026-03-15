@@ -158,17 +158,18 @@ def execute_sql(query: str, connection_string: str | None = None) -> SqlResult:
             )
 
         # Build pipe-delimited table (identical to original run_sql logic)
+        DISPLAY_MAX = 500  # max chars shown per cell in the text table
         col_widths = [len(col) for col in cols]
         str_rows: list[list[str]] = []
         for row in rows:
             str_row = [str(v) if v is not None else "NULL" for v in row]
             for i, val in enumerate(str_row):
-                col_widths[i] = max(col_widths[i], min(len(val), 50))
+                col_widths[i] = max(col_widths[i], min(len(val), DISPLAY_MAX))
             str_rows.append(str_row)
 
         def fmt_row(values: list[str]) -> str:
             return "  ".join(
-                v[:50].ljust(col_widths[i]) for i, v in enumerate(values)
+                v[:DISPLAY_MAX].ljust(col_widths[i]) for i, v in enumerate(values)
             )
 
         header = fmt_row(cols)

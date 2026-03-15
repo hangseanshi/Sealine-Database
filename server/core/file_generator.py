@@ -169,10 +169,69 @@ GENERATE_EXCEL_TOOL: dict[str, Any] = {
     },
 }
 
+GENERATE_WORD_LABEL_TOOL: dict[str, Any] = {
+    "name": "generate_word_label",
+    "description": (
+        "Generate a Word (.docx) shipping label document showing container events "
+        "grouped by location. Each location is a bold/underlined header formatted as "
+        "'LocationName/CountryCode (LOCode)'. Under each location, containers are "
+        "numbered sequentially with their events listed in order. "
+        "Use when the user asks for a shipping label, container label, Word label, "
+        "or a formatted document showing container events by location."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "filename": {
+                "type": "string",
+                "description": "Output filename without extension.",
+            },
+            "locations": {
+                "type": "array",
+                "description": "Ordered list of locations, each with its containers and events.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Location name, e.g. 'Houston'."},
+                        "country_code": {"type": "string", "description": "2-letter country code, e.g. 'US'."},
+                        "locode": {"type": "string", "description": "UN/LOCODE, e.g. 'USHOU'."},
+                        "containers": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "container_number": {"type": "string"},
+                                    "events": {
+                                        "type": "array",
+                                        "description": "Events at this location, ordered by order_id ascending.",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "date": {"type": "string", "description": "Date in YYYY-MM-DD format."},
+                                                "actual": {"type": "boolean", "description": "True if this is an actual event."},
+                                                "description": {"type": "string"},
+                                            },
+                                            "required": ["date", "actual", "description"],
+                                        },
+                                    },
+                                },
+                                "required": ["container_number", "events"],
+                            },
+                        },
+                    },
+                    "required": ["name", "country_code", "locode", "containers"],
+                },
+            },
+        },
+        "required": ["locations"],
+    },
+}
+
 FILE_TOOLS: list[dict[str, Any]] = [
     GENERATE_PLOT_TOOL,
     GENERATE_PDF_TOOL,
     GENERATE_EXCEL_TOOL,
+    GENERATE_WORD_LABEL_TOOL,
 ]
 
 # ---------------------------------------------------------------------------
@@ -435,6 +494,7 @@ window.onerror=function(m,s,l,c,e){
   .leg-line { width: 22px; height: 3px; border-radius: 2px; flex-shrink: 0; }
   .leg-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.8); flex-shrink: 0; }
   .leg-zone { width: 14px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+  .route-tooltip { background: rgba(255,255,255,0.97); border: 1px solid #ccc; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
   .stop-label {
     background: transparent !important;
     border: none !important;
@@ -445,7 +505,7 @@ window.onerror=function(m,s,l,c,e){
     text-shadow: 1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff;
     pointer-events: none;
   }
-  .leaflet-popup-content { font-size: 13px; line-height: 1.6; min-width: 160px; }
+  .leaflet-popup-content { font-size: 11px; line-height: 1.5; min-width: 320px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -523,8 +583,34 @@ function toHex(r,g,b) {
   return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
 }
 
+// ── Label helpers ─────────────────────────────────────────────────────────
+function extractLabelInfo(lbl) {
+  // Location: first <br>-delimited segment, strip HTML tags
+  var segs = lbl.split(/<br\\s*\\/?>/i);
+  var loc = (segs[0] || '').replace(/<[^>]+>/g, '').trim();
+  // Date: first YYYY-MM-DD (A/E) pattern in the label
+  var dm = lbl.match(/(\\d{4}-\\d{2}-\\d{2}\\s*\\([AE]\\))/);
+  return { loc: loc, date: dm ? dm[1] : '' };
+}
+
+function extractLabelInfoFor(lbl, containerName) {
+  var segs = lbl.split(/<br\\s*\\/?>/i);
+  var loc = (segs[0] || '').replace(/<[^>]+>/g, '').trim();
+  // Extract tracking number from data-trk attribute embedded in the label
+  var trkM = lbl.match(/data-trk="([^"]+)"/);
+  var tracking = trkM ? trkM[1] : '';
+  // If multiple containers share this stop, find the date for the specific container
+  if (containerName) {
+    var esc = containerName.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+    var cm = lbl.match(new RegExp(esc + '[^\\\\d]*(\\\\d{4}-\\\\d{2}-\\\\d{2}\\\\s*\\\\([AE]\\\\))'));
+    if (cm) return { loc: loc, date: cm[1], tracking: tracking };
+  }
+  var dm = lbl.match(/(\\d{4}-\\d{2}-\\d{2}\\s*\\([AE]\\))/);
+  return { loc: loc, date: dm ? dm[1] : '', tracking: tracking };
+}
+
 // ── Pure-Leaflet arrow line (no plugin needed) ────────────────────────────
-function drawArrowLine(fromPt, toPt, color, laneOffset) {
+function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
   // Pure Mercator math — no dependency on map state (avoids NaN from map.project)
   laneOffset = laneOffset || 0;
   var WSIZ = 1024; // world pixels at zoom 2 (256 * 2^2)
@@ -545,12 +631,33 @@ function drawArrowLine(fromPt, toPt, color, laneOffset) {
   var dx = p2.x - p1.x, dy = p2.y - p1.y;
   var pixChord = Math.sqrt(dx * dx + dy * dy) || 1;
 
+  // When stops are very close together the laneOffset (in absolute pixel space)
+  // would dwarf the chord, swinging the bezier control point wildly and
+  // producing huge crossing arcs.  Use a plain straight line for short segments.
+  var STRAIGHT_THRESHOLD = 10; // pixels at WSIZ=1024 ≈ 400 km real distance
+  if (pixChord < STRAIGHT_THRESHOLD) {
+    var _sl = L.polyline([fromPt, toPt], { color: color, weight: 3, opacity: 0.85 }).addTo(map);
+    if (tooltipHtml) _sl.bindTooltip(tooltipHtml, { sticky: true, className: 'route-tooltip' });
+    var mLat = (fromPt[0] + toPt[0]) / 2;
+    var mLon = (fromPt[1] + toPt[1]) / 2;
+    var mAngle = Math.atan2(toPt[1] - fromPt[1], toPt[0] - fromPt[0]) * 180 / Math.PI;
+    var mSvg = '<svg width="18" height="18" viewBox="-9 -9 18 18" xmlns="http://www.w3.org/2000/svg">'
+      + '<polygon points="0,-7 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
+      + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
+    L.marker([mLat, mLon], {
+      icon: L.divIcon({ html: mSvg, className: '', iconSize: [18, 18], iconAnchor: [9, 9] }),
+      interactive: false, zIndexOffset: 100,
+    }).addTo(map);
+    return;
+  }
+
   // Perpendicular unit vector (left of route direction) for lane separation
   var perpX = -dy / pixChord;
   var perpY =  dx / pixChord;
 
-  // Control point: northward by 15% of chord + lateral lane offset for parallel routes
-  var pxOffset = Math.max(40, pixChord * 0.15);
+  // Control point: northward by 20% of chord (fully proportional — no fixed minimum
+  // so nearby stops don't produce huge spurious arcs).
+  var pxOffset = pixChord * 0.20;
   var ctrl     = unmerc(p1.x + dx / 2 + perpX * laneOffset,
                         p1.y + dy / 2 - pxOffset + perpY * laneOffset);
   var ctrlLat  = Math.min(85, Math.max(-85, ctrl.lat));
@@ -566,16 +673,17 @@ function drawArrowLine(fromPt, toPt, color, laneOffset) {
       u*u*fromPt[1] + 2*u*t*ctrlLon + t*t*toPt[1],
     ]);
   }
-  L.polyline(curvePts, { color: color, weight: 3, opacity: 0.85 }).addTo(map);
+  var _cl = L.polyline(curvePts, { color: color, weight: 3, opacity: 0.85 }).addTo(map);
+  if (tooltipHtml) _cl.bindTooltip(tooltipHtml, { sticky: true, className: 'route-tooltip' });
 
-  // Arrow at the bezier midpoint (t = 0.5)
-  const arrowLat = 0.25*fromPt[0] + 0.5*ctrlLat + 0.25*toPt[0];
-  const arrowLon = 0.25*fromPt[1] + 0.5*ctrlLon + 0.25*toPt[1];
+  // Arrow at t=0.75 (descending leg toward destination, away from arc apex)
   function bzPt(t) {
     const u = 1 - t;
     return [u*u*fromPt[0]+2*u*t*ctrlLat+t*t*toPt[0], u*u*fromPt[1]+2*u*t*ctrlLon+t*t*toPt[1]];
   }
-  const pa = bzPt(0.48), pb = bzPt(0.52);
+  const arrPt = bzPt(0.75);
+  const arrowLat = arrPt[0], arrowLon = arrPt[1];
+  const pa = bzPt(0.73), pb = bzPt(0.77);
   const angle = Math.atan2(pb[1] - pa[1], pb[0] - pa[0]) * 180 / Math.PI;
 
   const svg = '<svg width="18" height="18" viewBox="-9 -9 18 18" xmlns="http://www.w3.org/2000/svg">'
@@ -671,23 +779,73 @@ MAP_DATA.routes.forEach(function(route) {
 
   if (!pts || pts.length === 0) return;
 
-  // 1. Draw lines with arrow markers
+  // 1. Draw lines with arrow markers + hover tooltips
   const laneOffsets = route.lane_offsets || [];
+  const rName = route.name || '';
+  const rTracking = route.tracking || '';
   connections.forEach(function(conn, ci) {
     const fi = conn[0], ti = conn[1];
     if (fi >= pts.length || ti >= pts.length) return;
-    drawArrowLine(pts[fi], pts[ti], color, laneOffsets[ci] || 0);
+    var fromInfo = extractLabelInfoFor(labels[fi] || '', rName);
+    var toInfo   = extractLabelInfoFor(labels[ti] || '', rName);
+    var trackingNum = fromInfo.tracking || toInfo.tracking || rTracking;
+    var header = trackingNum ? trackingNum + ' / ' + rName : rName;
+    var tip = '<div style="font-size:11px;line-height:1.6;white-space:nowrap;padding:2px 4px">'
+      + (header ? '<b>' + header + '</b><br>' : '')
+      + (fromInfo.loc || '?') + ' &rarr; ' + (toInfo.loc || '?');
+    if (fromInfo.date || toInfo.date) {
+      tip += '<br>' + (fromInfo.date || '?') + ' &rarr; ' + (toInfo.date || '?')
+           + '&nbsp;&nbsp;<span style="color:#666;font-size:10px">(A)=Actual&nbsp;(E)=Estimated</span>';
+    }
+    tip += '</div>';
+    drawArrowLine(pts[fi], pts[ti], color, laneOffsets[ci] || 0, tip);
   });
 
   // 2. Draw stop markers + permanent labels
   pts.forEach(function(pt, i) {
     const rawLabel = (labels[i] || '').toString();
-    // Normalise newlines and <br> tags to a standard <br>
-    const normLabel = rawLabel.replace(/\\n/g, '<br>').replace(/<br\\s*\\/?>/gi, '<br>');
-    // First line only for the always-visible dot label (uncluttered)
-    const firstLine = normLabel.split('<br>')[0].replace(/<[^>]+>/g, '').trim();
-    // Full label with <br> rendered as line-breaks for the click popup
-    const popupHtml = normLabel.replace(/<br>/g, '<br>');
+    // Build popup table: location header + per-container rows with event lines.
+    const popupHtml = (function(raw) {
+      var blocks = raw.split(/<br\\s*\\/?>/i);
+      if (blocks.length < 2) return raw.replace(/\\n|\\\\n/g, '<br>');
+      var header = blocks[0].replace(/<[^>]*>/g, '').trim();
+      var seqRe = /^(?:(\\d+)\\.\\s+)?(\\S+)\\s*([\\s\\S]*)/;
+      var rows = '';
+      if (header) {
+        rows += '<tr><td colspan="2" style="font-weight:bold;text-decoration:underline;text-align:center;padding-bottom:4px;white-space:nowrap">' + header + '</td></tr>';
+      }
+      for (var b = 1; b < blocks.length; b++) {
+        var blockText = blocks[b].replace(/<[^>]*>/g, '').trim();
+        if (!blockText) continue;
+        var lines = blockText.split(/\\n|\\\\n/);
+        var m = seqRe.exec(lines[0]);
+        if (!m) continue;
+        var seq = m[1] || '', container = m[2], rest = m[3].trim();
+        rows += '<tr>'
+          + (seq ? '<td style="padding-right:6px;font-weight:bold;vertical-align:top;white-space:nowrap">' + seq + ':</td>' : '<td></td>')
+          + '<td style="font-weight:bold;white-space:nowrap">' + container + '</td>'
+          + '</tr>';
+        var events = [];
+        if (rest) events.push(rest);
+        for (var j = 1; j < lines.length; j++) {
+          var ev = lines[j].trim();
+          if (ev) events.push(ev);
+        }
+        for (var k = 0; k < events.length; k++) {
+          rows += '<tr><td></td>'
+            + '<td style="white-space:nowrap">&nbsp;&nbsp;|&mdash;&mdash;&mdash;&mdash;&mdash;&mdash; ' + events[k] + '</td>'
+            + '</tr>';
+        }
+      }
+      var rowCount = (rows.match(/<\\/tr>/g) || []).length;
+      var table = '<table style="border-collapse:collapse;font-size:11px;line-height:1.2">' + rows + '</table>';
+      if (rowCount > 10) {
+        return '<div style="max-height:170px;overflow-y:auto;overflow-x:auto">' + table + '</div>';
+      }
+      return table;
+    })(rawLabel);
+    // First line only for the always-visible dot label — strip tags
+    const firstLine = rawLabel.split('<br>')[0].replace(/<[^>]+>/g, '').trim();
     const radius = (sizes[i] && +sizes[i] > 0) ? Math.max(6, Math.min(30, +sizes[i])) : 10;
 
     // Filled circle marker
@@ -699,7 +857,7 @@ MAP_DATA.routes.forEach(function(route) {
 
     // Popup on click — shows full detail (type, location, date, actual/estimated)
     if (popupHtml) {
-      marker.bindPopup('<div style="font-size:13px;line-height:1.8">' + popupHtml + '</div>');
+      marker.bindPopup('<div style="font-size:11px;line-height:1.2;white-space:nowrap">' + popupHtml + '</div>', {maxWidth: 700});
     }
 
     // Permanent label above the dot — first line only (keeps the map uncluttered)
@@ -761,13 +919,53 @@ def _plot_leaflet_map(
     # ── groups → routes conversion ────────────────────────────────────────
     # If caller passes flat lat/lon/labels + a "groups" array, auto-build
     # the routes list so they don't have to construct nested objects.
-    groups_raw = data.get("groups")
+    # groups values may be composite "TrackNumber_ContainerNumber" keys —
+    # each unique key becomes its own independent route (no cross-route connections).
+    groups_raw       = data.get("groups")
+    track_groups_raw = data.get("track_groups") or []
+    # Single tracking number shorthand — when agent provides tracking="TRK" instead of
+    # a full track_groups parallel array, fill track_groups_raw from it later.
+    _single_tracking = str(data.get("tracking", "") or "").strip()
+
+    import re as _grp_re
+    _container_suffix_pat = _grp_re.compile(r'^[A-Z]{4}[0-9]{7}$')
+
+    # ── Auto-derive groups from labels when agent omits the groups key ─────
+    # Labels may be 'TrackNumber/ContainerNumber<br>...' or 'ContainerNumber<br>...'
+    # Build composite 'TrackNumber_ContainerNumber' or plain container keys.
+    if not groups_raw and data.get("labels"):
+        _ag_trk_pat = _grp_re.compile(r'^(.+)/([A-Z]{4}[0-9]{7})')
+        _ag_cont_pat = _grp_re.compile(r'^([A-Z]{4}[0-9]{7})')
+        _auto_groups: list = []
+        for _ag_lbl in data["labels"]:
+            _ag_seg0 = (_ag_lbl.split("<br>")[0] if "<br>" in str(_ag_lbl) else str(_ag_lbl)).strip()
+            _ag_m = _ag_trk_pat.match(_ag_seg0)
+            if _ag_m:
+                _auto_groups.append(f"{_ag_m.group(1)}_{_ag_m.group(2)}")
+            else:
+                _ag_m2 = _ag_cont_pat.match(_ag_seg0)
+                _auto_groups.append(_ag_m2.group(1) if _ag_m2 else _ag_seg0)
+        if _auto_groups:
+            groups_raw = _auto_groups
+
+    # Default arrows=True whenever groups are present (agent frequently omits this)
+    if groups_raw and not data.get("arrows"):
+        arrows = True
+
+    def _grp_display_name(key: str) -> str:
+        """For composite 'TRK_CONTAINER' keys, return just 'CONTAINER' for display."""
+        if '_' in key:
+            suffix = key.rsplit('_', 1)[-1]
+            if _container_suffix_pat.match(suffix):
+                return suffix
+        return key
+
     if groups_raw and not data.get("routes"):
         raw_lats   = [float(v) for v in (data.get("lat")    or [])]
         raw_lons   = [float(v) for v in (data.get("lon")    or [])]
         raw_labels = list(data.get("labels") or [str(i) for i in range(len(raw_lats))])
         raw_sizes  = list(data.get("sizes")  or [])
-        # Preserve insertion order
+        # Preserve insertion order; key is the full composite group string
         seen: dict[str, dict] = {}
         for idx, grp in enumerate(groups_raw):
             grp = str(grp)
@@ -778,11 +976,165 @@ def _plot_leaflet_map(
                 seen[grp]["lon"].append(raw_lons[idx])
                 seen[grp]["labels"].append(raw_labels[idx] if idx < len(raw_labels) else "")
                 seen[grp]["sizes"].append(raw_sizes[idx] if idx < len(raw_sizes) else None)
-        routes_raw = [
-            {"name": grp, "lat": v["lat"], "lon": v["lon"],
-             "labels": v["labels"], "sizes": [s for s in v["sizes"] if s is not None]}
-            for grp, v in seen.items()
+
+        # ── Re-split mixed groups by container number ─────────────────────
+        # If any group bucket holds stops for more than one container (e.g.
+        # the agent used tracking numbers as group keys instead of composite
+        # TrackNumber_ContainerNumber keys), split it automatically so each
+        # container becomes its own independent route.
+        import re as _split_re
+        _lbl_cont_re = _split_re.compile(r'^[A-Z]{4}[0-9]{7}$')
+
+        def _label_container(lbl: str) -> str:
+            """Return the bare container number from a label's first <br> segment, or ''."""
+            seg0 = lbl.split("<br>")[0] if "<br>" in lbl else lbl
+            seg0 = _split_re.sub(r"<[^>]+>", "", seg0).strip()
+            return seg0 if _lbl_cont_re.match(seg0) else ""
+
+        _needs_split = any(
+            len({_label_container(lbl) for lbl in gd["labels"]} - {""}) > 1
+            for gd in seen.values()
+        )
+        if _needs_split:
+            _new_seen: dict[str, dict] = {}
+            for _gk, _gd in seen.items():
+                for _i, _lbl in enumerate(_gd["labels"]):
+                    _cont = _label_container(_lbl)
+                    _sub_key = f"{_gk}_{_cont}" if _cont else _gk
+                    if _sub_key not in _new_seen:
+                        _new_seen[_sub_key] = {"lat": [], "lon": [], "labels": [], "sizes": []}
+                    _new_seen[_sub_key]["lat"].append(_gd["lat"][_i])
+                    _new_seen[_sub_key]["lon"].append(_gd["lon"][_i])
+                    _new_seen[_sub_key]["labels"].append(_lbl)
+                    _new_seen[_sub_key]["sizes"].append(
+                        _gd["sizes"][_i] if _i < len(_gd["sizes"]) else None)
+            seen = _new_seen
+
+        # ── Color assignment: shade by tracking number ───────────────────
+        # Composite keys (TrackNumber_ContainerNumber): one base hue per
+        # tracking number, containers shaded light → dark within each hue.
+        # Plain container keys: distinct color per container.
+        import re as _cre
+        _composite_pat = _cre.compile(r'^(.+)_([A-Z]{4}[0-9]{7})$')
+        _all_grps = list(seen.keys())
+
+        def _extract_track(key: str):
+            m = _composite_pat.match(key)
+            return m.group(1) if m else None
+
+        # Base hues — one distinct saturated color per tracking number
+        TRACK_BASE_COLORS = [
+            "#27AE60",  # Green
+            "#2980B9",  # Blue
+            "#E67E22",  # Orange
+            "#8E44AD",  # Purple
+            "#C0392B",  # Red
+            "#16A085",  # Teal
+            "#D35400",  # Burnt Orange
+            "#1A5276",  # Dark Navy
+            "#6C3483",  # Violet
+            "#1E8449",  # Dark Green
         ]
+
+        def _blend_shade(hex_col: str, factor: float) -> str:
+            """factor < 1.0 → mix with white (lighter); factor = 1.0 → base; factor > 1.0 → darken."""
+            r = int(hex_col[1:3], 16)
+            g = int(hex_col[3:5], 16)
+            b = int(hex_col[5:7], 16)
+            if factor <= 1.0:
+                r = int(r * factor + 255 * (1 - factor))
+                g = int(g * factor + 255 * (1 - factor))
+                b = int(b * factor + 255 * (1 - factor))
+            else:
+                r = max(0, int(r * (2 - factor)))
+                g = max(0, int(g * (2 - factor)))
+                b = max(0, int(b * (2 - factor)))
+            return "#%02x%02x%02x" % (min(255, r), min(255, g), min(255, b))
+
+        _all_composite = bool(_all_grps) and all(_extract_track(g) for g in _all_grps)
+
+        if _all_composite:
+            # One base hue per unique tracking number (insertion order)
+            _unique_tracks = list(dict.fromkeys(_extract_track(g) for g in _all_grps))
+            _track_base = {t: TRACK_BASE_COLORS[i % len(TRACK_BASE_COLORS)]
+                           for i, t in enumerate(_unique_tracks)}
+            # Containers per tracking number (insertion order)
+            _track_containers: dict[str, list] = {}
+            for _g in _all_grps:
+                _track_containers.setdefault(_extract_track(_g), []).append(_g)
+
+            routes_raw = []
+            for grp, v in seen.items():
+                trk = _extract_track(grp)
+                base = _track_base[trk]
+                siblings = _track_containers[trk]
+                n = len(siblings)
+                idx_in_track = siblings.index(grp)
+                # Light (factor=0.35) → dark (factor=1.1), evenly spread
+                factor = 0.35 + (idx_in_track / max(n - 1, 1)) * 0.75 if n > 1 else 0.85
+                routes_raw.append({
+                    "name": _grp_display_name(grp), "tracking": trk,
+                    "lat": v["lat"], "lon": v["lon"],
+                    "labels": v["labels"], "sizes": [s for s in v["sizes"] if s is not None],
+                    "color": _blend_shade(base, factor),
+                })
+        else:
+            # Plain container keys — use track_groups_raw for tracking info and shading
+            _cont_pat = _cre.compile(r'^[A-Z]{4}[0-9]{7}$')
+            if _all_grps and all(_cont_pat.match(str(g)) for g in _all_grps):
+                if track_groups_raw:
+                    # Build container → tracking map (first occurrence wins)
+                    _cont_to_trk: dict[str, str] = {}
+                    for _ti, _gv in enumerate(groups_raw):
+                        _gd = str(_gv)
+                        if _ti < len(track_groups_raw) and _gd not in _cont_to_trk:
+                            _cont_to_trk[_gd] = str(track_groups_raw[_ti])
+                    _trk_unique2 = list(dict.fromkeys(_cont_to_trk.values()))
+                    _trk_base2 = {t: TRACK_BASE_COLORS[i % len(TRACK_BASE_COLORS)]
+                                  for i, t in enumerate(_trk_unique2)}
+                    _trk_conts2: dict[str, list] = {}
+                    for _ck in _all_grps:
+                        _trk_conts2.setdefault(_cont_to_trk.get(_ck, ""), []).append(_ck)
+                    routes_raw = []
+                    for grp, v in seen.items():
+                        _trk = _cont_to_trk.get(grp, "")
+                        _base2 = _trk_base2.get(_trk, ROUTE_COLORS[0])
+                        _sibs2 = _trk_conts2.get(_trk, [grp])
+                        _n2 = len(_sibs2)
+                        _idx2 = _sibs2.index(grp) if grp in _sibs2 else 0
+                        _factor2 = 0.35 + (_idx2 / max(_n2 - 1, 1)) * 0.75 if _n2 > 1 else 0.85
+                        routes_raw.append({
+                            "name": grp, "tracking": _trk,
+                            "lat": v["lat"], "lon": v["lon"],
+                            "labels": v["labels"], "sizes": [s for s in v["sizes"] if s is not None],
+                            "color": _blend_shade(_base2, _factor2),
+                        })
+                else:
+                    # No track_groups from agent — use _single_tracking if provided
+                    routes_raw = []
+                    _st = _single_tracking  # may be "" if agent omitted tracking param too
+                    _st_all = list(seen.keys())
+                    _st_n = len(_st_all)
+                    _st_base = TRACK_BASE_COLORS[0] if _st else None
+                    for _idx, (grp, v) in enumerate(seen.items()):
+                        if _st and _st_base:
+                            _st_factor = 0.35 + (_idx / max(_st_n - 1, 1)) * 0.75 if _st_n > 1 else 0.85
+                            _st_color = _blend_shade(_st_base, _st_factor)
+                        else:
+                            _st_color = ROUTE_COLORS[_idx % len(ROUTE_COLORS)]
+                        routes_raw.append({
+                            "name": grp, "tracking": _st,
+                            "lat": v["lat"], "lon": v["lon"],
+                            "labels": v["labels"], "sizes": [s for s in v["sizes"] if s is not None],
+                            "color": _st_color,
+                        })
+            else:
+                routes_raw = [
+                    {"name": _grp_display_name(grp), "tracking": "",
+                     "lat": v["lat"], "lon": v["lon"],
+                     "labels": v["labels"], "sizes": [s for s in v["sizes"] if s is not None]}
+                    for grp, v in seen.items()
+                ]
     else:
         routes_raw = data.get("routes")
 
@@ -864,9 +1216,10 @@ def _plot_leaflet_map(
             if (arrows or r_connections) and len(r_lats) > 1:
                 r_connections = [[j, j + 1] for j in range(len(r_lats) - 1)]
 
-            color = ROUTE_COLORS[i % len(ROUTE_COLORS)]
+            color = route.get("color") or ROUTE_COLORS[i % len(ROUTE_COLORS)]
             map_data["routes"].append({
                 "name": r_name,
+                "tracking": route.get("tracking", ""),
                 "color": color,
                 "points": [[la, lo] for la, lo in zip(r_lats, r_lons)],
                 "labels": r_labels,
@@ -926,6 +1279,27 @@ def _plot_leaflet_map(
                     seen_grp[grp]["labels"].append(labels[idx] if idx < len(labels) else "")
                     seen_grp[grp]["sizes"].append(sizes[idx] if idx < len(sizes) else None)
 
+            # Shade containers by tracking number when all groups look like
+            # container numbers (AAAA1234567) — same base colour, lighter → darker.
+            # For multi-tracking without track_groups we cannot distinguish which
+            # container belongs to which tracking, so shade all from ROUTE_COLORS[0].
+            _p3_pat = _re.compile(r'^[A-Z]{4}[0-9]{7}$')
+            _p3_grps = list(seen_grp.keys())
+            _p3_all_containers = bool(_p3_grps) and all(
+                _p3_pat.match(str(g)) for g in _p3_grps
+            )
+            _p3_n = len(_p3_grps)
+
+            def _p3_shade(hex_col: str, factor: float) -> str:
+                _r = int(hex_col[1:3], 16)
+                _g = int(hex_col[3:5], 16)
+                _b = int(hex_col[5:7], 16)
+                return "#%02x%02x%02x" % (
+                    max(0, min(255, int(_r * factor))),
+                    max(0, min(255, int(_g * factor))),
+                    max(0, min(255, int(_b * factor))),
+                )
+
             for gi, (grp_name, gdata) in enumerate(seen_grp.items()):
                 g_lats, g_lons, g_lbls, g_sizes = _dedup_route(
                     gdata["lat"], gdata["lon"], gdata["labels"],
@@ -977,10 +1351,72 @@ def _plot_leaflet_map(
             all_lats.extend(lats)
             all_lons.extend(lons)
 
+    # ── Merge stop labels at shared locations across container routes ─────
+    # When multiple containers share the same lat/lon stop, combine their
+    # labels into one entry: LocationName<br>ContainerA  date  desc<br>...
+    import re as _mlre
+    _loc_stops: dict = {}   # (r_lat, r_lon) → [(route_idx, stop_idx, label)]
+    for _ri, _route in enumerate(map_data["routes"]):
+        for _si, _pt in enumerate(_route["points"]):
+            _key = (round(_pt[0], 3), round(_pt[1], 3))
+            _lbl = _route["labels"][_si] if _si < len(_route["labels"]) else ""
+            _loc_stops.setdefault(_key, []).append((_ri, _si, _lbl))
+
+    for _key, _stops in _loc_stops.items():
+        if len(_stops) < 2:
+            continue
+        _loc_name = ""
+        _container_parts: list = []   # list of (container_str, detail_str)
+        for _ri, _si, _lbl in _stops:
+            _segs = _mlre.split(r"<br\s*/?>", _lbl, flags=_mlre.IGNORECASE)
+            _container = _segs[0].strip() if _segs else ""
+            if not _loc_name and len(_segs) > 1:
+                _loc_name = _segs[1].strip()
+            # seg 2 = date, seg 3 = description
+            _date = _segs[2].strip() if len(_segs) > 2 else ""
+            _desc = _segs[3].strip() if len(_segs) > 3 else ""
+            _detail = "  ".join(p for p in [_date, _desc] if p)
+            _container_parts.append((_container, _detail))
+        if _loc_name and _container_parts:
+            # Location: bold, centred header
+            _loc_html = f'<b style="display:block;text-align:center">{_loc_name}</b>'
+            # Each container: numbered, name in bold
+            _item_lines = []
+            for _ci, (_cont, _det) in enumerate(_container_parts):
+                _item = f'{_ci + 1}. <b>{_cont}</b>'
+                if _det:
+                    _item += f"  {_det}"
+                _item_lines.append(_item)
+            _combined = _loc_html + "<br>" + "<br>".join(_item_lines)
+            for _ri, _si, _ in _stops:
+                if _si < len(map_data["routes"][_ri]["labels"]):
+                    map_data["routes"][_ri]["labels"][_si] = _combined
+
+    # ── Reformat single-container labels: location first (bold/centred), name bold ──
+    # Applies only to labels whose first segment is a standard container number
+    # (4 uppercase letters + 7 digits).  Route-map tracking-number labels are
+    # intentionally left unchanged.
+    _sc_pat = _mlre.compile(r'^[A-Z]{4}[0-9]{7}$')
+    for _ri, _route in enumerate(map_data["routes"]):
+        for _si, _lbl in enumerate(_route["labels"]):
+            _segs = _mlre.split(r"<br\s*/?>", _lbl, flags=_mlre.IGNORECASE)
+            if len(_segs) >= 2 and _sc_pat.match(_segs[0].strip()):
+                _cont = _segs[0].strip()
+                _trk  = _route.get("tracking", "")
+                _loc  = _segs[1].strip()
+                _date = _segs[2].strip() if len(_segs) > 2 else ""
+                _desc = _segs[3].strip() if len(_segs) > 3 else ""
+                _detail = "  ".join(p for p in [_date, _desc] if p)
+                _loc_html = f'<b style="display:block;text-align:center">{_loc}</b>'
+                _item = f'<b data-trk="{_trk}">{_cont}</b>' if _trk else f'<b>{_cont}</b>'
+                if _detail:
+                    _item += f"  {_detail}"
+                map_data["routes"][_ri]["labels"][_si] = _loc_html + "<br>" + _item
+
     # ── Lane offsets: separate parallel connections so they don't overlap ──
     # Two connections are "parallel" when their rounded endpoint coords match.
     # We spread them apart by ±LANE_PX pixels perpendicular to the route.
-    _LANE_PX = 13
+    _LANE_PX = 6
     _conn_reg: dict = {}
     for _ri, _route in enumerate(map_data["routes"]):
         _pts = _route["points"]
@@ -1538,7 +1974,146 @@ def generate_excel(
 
 
 # ---------------------------------------------------------------------------
-# 4. cleanup_expired_files
+# 4. generate_word_label
+# ---------------------------------------------------------------------------
+
+
+def generate_word_label(
+    locations: list[dict[str, Any]],
+    filename: str | None = None,
+    file_store_path: str = "./tmp/files",
+) -> dict[str, Any]:
+    """Generate a Word (.docx) shipping label document.
+
+    Each location becomes a bold/underlined header.  Under it, containers are
+    numbered sequentially; the first event appears on the same line as the
+    container name and subsequent events are indented to align with the date
+    field of the first event.
+    """
+    ensure_file_store(file_store_path)
+    file_id = _short_uuid()
+    safe_name = _slugify(filename) if filename else "shipping_labels"
+
+    try:
+        from docx import Document  # type: ignore[import-untyped]
+        from docx.shared import Pt, Inches  # type: ignore[import-untyped]
+        from docx.oxml.ns import qn  # type: ignore[import-untyped]
+        from docx.oxml import OxmlElement  # type: ignore[import-untyped]
+    except ImportError:
+        return {
+            "error": (
+                "python-docx is not installed. "
+                "Run: pip install python-docx"
+            )
+        }
+
+    try:
+        doc = Document()
+
+        # Remove default styles' extra space and set body font to Calibri 11pt.
+        style = doc.styles["Normal"]
+        style.font.name = "Calibri"
+        style.font.size = Pt(11)
+
+        # Remove extra spacing on all paragraphs (Word adds 10pt after by default).
+        from docx.shared import Pt as _Pt
+        style.paragraph_format.space_before = _Pt(0)
+        style.paragraph_format.space_after = _Pt(0)
+
+        def _add_location_header(name: str, country_code: str, locode: str) -> None:
+            """Add a bold+underline location header paragraph."""
+            para = doc.add_paragraph()
+            para.paragraph_format.space_before = Pt(6)
+            para.paragraph_format.space_after = Pt(2)
+            run = para.add_run(f"{name}/{country_code} ({locode})")
+            run.bold = True
+            run.underline = True
+            run.font.size = Pt(11)
+
+        def _event_text(date: str, actual: bool, description: str) -> str:
+            actual_marker = "(A)" if actual else "(E)"
+            return f"{date} {actual_marker}: {description}"
+
+        for location in locations:
+            loc_name = location.get("name", "")
+            country_code = location.get("country_code", "")
+            locode = location.get("locode", "")
+            containers = location.get("containers", [])
+
+            _add_location_header(loc_name, country_code, locode)
+
+            for seq, container in enumerate(containers, start=1):
+                container_number = container.get("container_number", "")
+                events = container.get("events", [])
+                if not events:
+                    continue
+
+                first_event = events[0]
+                first_event_text = _event_text(
+                    first_event["date"], first_event["actual"], first_event["description"]
+                )
+
+                # ── First-event line: "{seq}.  ContainerName: date (A): desc" ──
+                first_para = doc.add_paragraph()
+                first_para.paragraph_format.space_before = Pt(2)
+                first_para.paragraph_format.space_after = Pt(0)
+
+                # Sequence number (normal weight)
+                seq_run = first_para.add_run(f"{seq}.  ")
+                seq_run.font.size = Pt(11)
+
+                # Container number (bold)
+                name_run = first_para.add_run(container_number)
+                name_run.bold = True
+                name_run.font.size = Pt(11)
+
+                # Colon + first event (normal weight)
+                event_run = first_para.add_run(f": {first_event_text}")
+                event_run.font.size = Pt(11)
+
+                # ── Continuation lines for remaining events ──────────────────
+                # Estimate the left indent by approximating character widths.
+                # prefix = "{seq}.  {container_number}: " — we use ~5.5pt per
+                # char for normal text and ~6pt for bold, rounded up.
+                prefix_normal = f"{seq}.  "   # normal weight chars
+                prefix_bold = container_number  # bold chars
+                prefix_colon = ": "             # normal weight
+                indent_pt = (
+                    len(prefix_normal) * 5.5
+                    + len(prefix_bold) * 6.0
+                    + len(prefix_colon) * 5.5
+                )
+                indent = Pt(indent_pt)
+
+                for event in events[1:]:
+                    cont_para = doc.add_paragraph()
+                    cont_para.paragraph_format.space_before = Pt(0)
+                    cont_para.paragraph_format.space_after = Pt(0)
+                    cont_para.paragraph_format.left_indent = indent
+
+                    cont_run = cont_para.add_run(
+                        _event_text(event["date"], event["actual"], event["description"])
+                    )
+                    cont_run.font.size = Pt(11)
+
+        out_filename = f"{file_id}_{safe_name}.docx"
+        full_path = os.path.join(file_store_path, out_filename)
+        doc.save(full_path)
+
+        return _file_meta(
+            file_id,
+            f"{safe_name}.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            full_path,
+        )
+
+    except Exception as exc:
+        logger.exception("generate_word_label failed")
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# 5. cleanup_expired_files
 # ---------------------------------------------------------------------------
 
 
@@ -1610,6 +2185,12 @@ def handle_file_tool(tool_name: str, tool_input: dict[str, Any],
             title=tool_input["title"],
             columns=tool_input["columns"],
             rows=tool_input["rows"],
+            filename=tool_input.get("filename"),
+            file_store_path=file_store_path,
+        )
+    elif tool_name == "generate_word_label":
+        return generate_word_label(
+            locations=tool_input["locations"],
             filename=tool_input.get("filename"),
             file_store_path=file_store_path,
         )
