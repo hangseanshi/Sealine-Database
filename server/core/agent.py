@@ -129,13 +129,41 @@ _FALLBACK_EXCEL_TOOL = {
 }
 
 
+TRACKING_ROUTES_TOOL = {
+    "name": "show_tracking_routes",
+    "description": (
+        "Generate an interactive route map for one or more tracking numbers. "
+        "ONLY call this tool when the user asks for a route map and their message "
+        "does NOT contain the word 'container' or 'containers'. "
+        "DO NOT call this tool when the user mentions containers — use show_container_routes instead. "
+        "Internally runs the Sealine_Route query and renders a Leaflet map with "
+        "Pre-Pol → Pol → Pod → Post-Pod stops, arrow lines, and per-stop tooltips."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "track_numbers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "One or more tracking numbers (e.g. DALA71196300).",
+            },
+            "title": {
+                "type": "string",
+                "description": "Map title shown at the top.",
+            },
+        },
+        "required": ["track_numbers"],
+    },
+}
+
 CONTAINER_ROUTES_TOOL = {
     "name": "show_container_routes",
     "description": (
-        "Generate an interactive map showing the route of every container under one or more "
-        "tracking numbers, or for specific container numbers. "
-        "Call this tool WHENEVER the user asks about container routes, container movements, "
-        "or wants to see containers on a map. "
+        "Generate an interactive container route map. "
+        "ONLY call this tool when the user's message explicitly contains the word "
+        "'container' or 'containers'. "
+        "DO NOT call this tool for generic route maps or tracking number maps — "
+        "use generate_plot for those instead. "
         "Each container gets its own coloured route with arrow lines between stops."
     ),
     "input_schema": {
@@ -285,6 +313,7 @@ class SealineAgent:
         tools.append(_to_openai_tool(_get_plot_tool_def()))
         tools.append(_to_openai_tool(_get_pdf_tool_def()))
         tools.append(_to_openai_tool(_get_excel_tool_def()))
+        tools.append(_to_openai_tool(TRACKING_ROUTES_TOOL))
         tools.append(_to_openai_tool(CONTAINER_ROUTES_TOOL))
         return tools
 
@@ -425,10 +454,197 @@ class SealineAgent:
                 yield _sse("tool_result", {"tool": "generate_excel", "result": msg, "truncated": False})
                 return msg
 
+        elif name == "show_tracking_routes":
+            # ── Dedicated tracking-number route map tool ────────────────────
+            # Uses v_sealine_tracking_route view (pre-aggregated per location).
+            # NEVER uses Sealine_Locations directly.
+            # Triggered ONLY when user asks for route map WITHOUT "container".
+            import re as _re
+            track_numbers = tool_input.get("track_numbers") or []
+            title = tool_input.get("title") or "Tracking Route Map"
+
+            if not track_numbers:
+                msg = "show_tracking_routes requires track_numbers."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            vals = ", ".join(f"'{v}'" for v in track_numbers)
+            sql = (
+                "SELECT TrackNumber, Lat, Lng, LocationName, "
+                "RouteType, MinOrderId, NoOfContainers, EventLines "
+                "FROM v_sealine_tracking_route "
+                f"WHERE TrackNumber IN ({vals}) "
+                "ORDER BY TrackNumber, MinOrderId ASC"
+            )
+
+            yield _sse("tool_start", {"tool": "execute_sql", "query": sql})
+            result = execute_sql(sql)
+            self.sql_calls += 1
+            yield _sse("tool_result", {"tool": "execute_sql", "result": result.text, "truncated": result.truncated})
+
+            if result.error or not result.rows:
+                msg = f"No route data found for tracking numbers: {track_numbers}."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            # ── Map column indices ──────────────────────────────────────────
+            cols = [c.upper() for c in (result.columns or [])]
+            try:
+                i_trk    = cols.index("TRACKNUMBER")
+                i_lat    = cols.index("LAT")
+                i_lon    = cols.index("LNG")
+                i_name   = cols.index("LOCATIONNAME")
+                i_rtype  = cols.index("ROUTETYPE")
+                i_order  = cols.index("MINORDERID")
+                i_noc    = cols.index("NOOFCONTAINERS")
+                i_events = cols.index("EVENTLINES")
+            except ValueError:
+                i_trk, i_lat, i_lon, i_name, i_rtype, i_order, i_noc, i_events = \
+                    0, 1, 2, 3, 4, 5, 6, 7
+
+            TRACK_COLORS = [
+                "#27AE60", "#2980B9", "#E67E22", "#8E44AD", "#C0392B",
+                "#16A085", "#D35400", "#1A5276", "#6C3483", "#1E8449",
+            ]
+
+            # ── Build location index and route sequences ────────────────────
+            # loc_index: rounded(lat,lon) → index in locations list
+            # locations: [{name, lat, lon, tracks:[{trk, routeType, events}]}]
+            # trk_routes: trk → [loc_idx, ...]  ordered by MinOrderId
+            loc_index: dict = {}
+            locations: list = []
+            trk_routes: dict = {}
+            trk_order: list = []  # preserve insertion order of tracking numbers
+            trk_containers: dict = {}  # trk → NoOfContainers (from first row seen)
+
+            for row in result.rows:
+                try:
+                    trk        = str(row[i_trk]).strip()
+                    lat        = float(row[i_lat])
+                    lon        = float(row[i_lon])
+                    display    = str(row[i_name]).strip() if row[i_name] else ""
+                    route_type = str(row[i_rtype]).strip() if row[i_rtype] else ""
+                    noc_raw    = row[i_noc]
+                    events_raw = str(row[i_events]).strip() if row[i_events] else ""
+                except (ValueError, IndexError, TypeError):
+                    continue
+
+                # Capture NoOfContainers once per tracking number
+                if trk not in trk_containers:
+                    try:
+                        trk_containers[trk] = int(noc_raw) if noc_raw is not None else 0
+                    except (ValueError, TypeError):
+                        trk_containers[trk] = 0
+
+                # Parse events — delimited by <BR> (case-insensitive)
+                events = [e.strip() for e in _re.split(r'<BR>', events_raw, flags=_re.IGNORECASE) if e.strip()]
+
+                # Unique location key (rounded to avoid float noise)
+                loc_key = (round(lat, 5), round(lon, 5))
+                if loc_key not in loc_index:
+                    loc_index[loc_key] = len(locations)
+                    locations.append({"name": display, "lat": lat, "lon": lon, "tracks": []})
+                idx = loc_index[loc_key]
+
+                # Add this tracking number's data to the location
+                # (one entry per TrackNumber per location — view PK is TrackNumber+LocationName)
+                locations[idx]["tracks"].append({
+                    "trk": trk,
+                    "routeType": route_type,
+                    "events": events,
+                })
+
+                # Build ordered stop list per TrackNumber
+                if trk not in trk_routes:
+                    trk_routes[trk] = []
+                    trk_order.append(trk)
+                trk_routes[trk].append(idx)
+
+            if not locations:
+                msg = f"No mappable coordinates found for {track_numbers}."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            # ── Enforce map limits ──────────────────────────────────────────
+            # Cap at 500 unique stops; keep as many COMPLETE routes as possible.
+            MAX_TRACKING_STOPS = 500
+            map_truncated = False
+
+            if len(locations) > MAX_TRACKING_STOPS:
+                map_truncated = True
+                kept_trk_order: list = []
+                kept_loc_set: set = set()
+                for _trk in trk_order:
+                    _stops = trk_routes.get(_trk, [])
+                    _added = set(_stops) - kept_loc_set
+                    if len(kept_loc_set) + len(_added) <= MAX_TRACKING_STOPS:
+                        kept_trk_order.append(_trk)
+                        kept_loc_set.update(_stops)
+                    else:
+                        break
+                if not kept_trk_order and trk_order:  # always keep at least 1
+                    _first = trk_order[0]
+                    kept_trk_order = [_first]
+                    kept_loc_set = set(trk_routes.get(_first, []))
+
+                trk_order = kept_trk_order
+                trk_routes = {k: v for k, v in trk_routes.items() if k in kept_trk_order}
+                # Re-index locations to only those still referenced
+                _used = sorted(kept_loc_set)
+                _old_to_new = {old: new for new, old in enumerate(_used)}
+                locations = [locations[i] for i in _used]
+                trk_routes = {k: [_old_to_new[i] for i in v] for k, v in trk_routes.items()}
+
+            # ── Build routes list ───────────────────────────────────────────
+            routes = [
+                {
+                    "trk":            trk,
+                    "color":          TRACK_COLORS[i % len(TRACK_COLORS)],
+                    "stops":          trk_routes[trk],
+                    "noOfContainers": trk_containers.get(trk, 0),
+                }
+                for i, trk in enumerate(trk_order)
+            ]
+
+            map_data = {"locations": locations, "routes": routes}
+            unique_tracks = len(routes)
+            unique_stops  = len(locations)
+
+            yield _sse("tool_start", {"tool": "generate_plot", "query": title})
+            if _FILE_TOOLS_AVAILABLE:
+                try:
+                    from server.core.file_generator import (
+                        _short_uuid, _slugify, ensure_file_store, _file_meta,
+                        _plot_tracking_route_map,
+                    )
+                    file_id   = _short_uuid()
+                    slug      = _slugify(title)
+                    ensure_file_store(self.file_store_path)
+                    file_info = _plot_tracking_route_map(
+                        title=title,
+                        data=map_data,
+                        file_id=file_id,
+                        title_slug=slug,
+                        file_store_path=self.file_store_path,
+                    )
+                    self.generated_files.append(file_info)
+                    yield _sse("file_generated", file_info)
+                    _trunc_flag = " MAP_TRUNCATED" if map_truncated else ""
+                    return (
+                        f"Tracking route map generated: {unique_tracks} tracking number(s), "
+                        f"{unique_stops} unique stop(s).{_trunc_flag}"
+                    )
+                except Exception as exc:
+                    error_msg = f"Tracking route map error: {exc}"
+                    logger.exception(error_msg)
+                    yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
+                    return error_msg
+            return result.text
+
         elif name == "show_container_routes":
             # ── Dedicated container-route map tool ─────────────────────────
-            # Runs its own SQL against Sealine_Container_Event so the AI never
-            # needs to choose between Sealine_Locations and Container_Event.
+            # Uses v_sealine_container_route — Sealine_Container_Event MUST NOT
+            # be referenced here or anywhere in the codebase.
             track_numbers = tool_input.get("track_numbers") or []
             container_numbers = tool_input.get("container_numbers") or []
             title = tool_input.get("title") or "Container Routes"
@@ -440,30 +656,17 @@ class SealineAgent:
 
             if track_numbers:
                 vals = ", ".join(f"'{v}'" for v in track_numbers)
-                where = f"e.TrackNumber IN ({vals})"
+                where = f"v.TrackNumber IN ({vals})"
             else:
                 vals = ", ".join(f"'{v}'" for v in container_numbers)
-                where = f"e.Container_NUMBER IN ({vals})"
+                where = f"v.Container_NUMBER IN ({vals})"
 
             sql = (
-                "SELECT e.Container_NUMBER, "
-                "TRY_CAST(COALESCE(f.Lat, l.Lat) AS FLOAT) AS Lat, "
-                "TRY_CAST(COALESCE(f.Lng, l.Lng) AS FLOAT) AS Lng, "
-                "COALESCE(f.Name, l.Name) AS LocationName, "
-                "MIN(CONVERT(VARCHAR(10), e.Date, 120)) AS FirstDate, "
-                "MAX(CAST(e.Actual AS INT)) AS IsActual "
-                "FROM Sealine_Container_Event e "
-                "LEFT JOIN Sealine_Facilities f "
-                "  ON e.TrackNumber = f.TrackNumber AND e.Facility = f.Id "
-                "LEFT JOIN Sealine_Locations l "
-                "  ON e.TrackNumber = l.TrackNumber AND e.Location = l.Id "
-                f"WHERE {where} AND e.DeletedDt IS NULL "
-                "AND COALESCE(f.Lat, l.Lat) IS NOT NULL "
-                "AND COALESCE(f.Lng, l.Lng) IS NOT NULL "
-                "GROUP BY e.Container_NUMBER, "
-                "  COALESCE(f.Lat, l.Lat), COALESCE(f.Lng, l.Lng), "
-                "  COALESCE(f.Name, l.Name) "
-                "ORDER BY e.Container_NUMBER, MIN(TRY_CAST(e.Order_id AS INT)) ASC"
+                "SELECT v.Container_NUMBER, v.TrackNumber, v.Lat, v.Lng, "
+                "v.LocationName, v.Country_Code, v.LOCode, v.MinOrderId, v.EventLines "
+                "FROM v_sealine_container_route v "
+                f"WHERE {where} AND v.Lat IS NOT NULL AND v.Lng IS NOT NULL "
+                "ORDER BY v.TrackNumber, v.Container_NUMBER, v.MinOrderId ASC"
             )
 
             yield _sse("tool_start", {"tool": "execute_sql", "query": sql})
@@ -471,47 +674,84 @@ class SealineAgent:
             self.sql_calls += 1
             yield _sse("tool_result", {"tool": "execute_sql", "result": result.text, "truncated": result.truncated})
 
-            # Parse result rows into map data
-            lats, lons, labels, groups = [], [], [], []
-            for line in result.text.splitlines():
-                line = line.strip()
-                if not line or line.startswith("-") or line.startswith("Container"):
-                    continue
-                parts = line.split()
-                if len(parts) < 4:
-                    continue
-                try:
-                    cnum = parts[0]
-                    lat = float(parts[1])
-                    lon = float(parts[2])
-                    loc = parts[3]
-                    date_str = parts[4] if len(parts) > 4 else ""
-                    is_actual = parts[5] if len(parts) > 5 else "0"
-                    status = "Actual" if str(is_actual).strip() == "1" else "Estimated"
-                    label = f"{cnum}<br>{loc}<br>{date_str} ({status})" if date_str else f"{cnum}<br>{loc}"
-                    lats.append(lat); lons.append(lon)
-                    labels.append(label); groups.append(cnum)
-                except (ValueError, IndexError):
-                    continue
-
-            if not lats:
+            if result.error or not result.rows:
                 msg = f"No container route data found for {track_numbers or container_numbers}."
                 yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
                 return msg
 
+            # ── Build map arrays from structured rows ─────────────────────
+            # Loop order: outer=TrackNumber, inner=Container_NUMBER, sorted by MinOrderId ASC
+            # groups       = TrackNumber_Container_NUMBER  → independent route per container
+            # track_groups = TrackNumber                   → same colour within one tracking number
+            lats, lons, labels, groups, track_groups = [], [], [], [], []
+
+            cols = [c.upper() for c in (result.columns or [])]
+            try:
+                i_cnum   = cols.index("CONTAINER_NUMBER")
+                i_trk    = cols.index("TRACKNUMBER")
+                i_lat    = cols.index("LAT")
+                i_lon    = cols.index("LNG")
+                i_loc    = cols.index("LOCATIONNAME")
+                i_events = cols.index("EVENTLINES")
+            except ValueError:
+                i_cnum, i_trk, i_lat, i_lon, i_loc, i_events = 0, 1, 2, 3, 4, 8
+
+            points_added = 0
+            for row in result.rows:
+                try:
+                    cnum   = str(row[i_cnum]).strip()
+                    trk    = str(row[i_trk]).strip()
+                    lat    = float(row[i_lat])
+                    lon    = float(row[i_lon])
+                    loc    = str(row[i_loc]).strip()
+                    events = str(row[i_events]).strip() if row[i_events] else ""
+                except (ValueError, IndexError, TypeError):
+                    continue
+
+                # Label format: location as popup header (blocks[0]);
+                # container + events in one block (blocks[1]) with \n separating
+                # event lines so the popup JS can render them as individual rows.
+                label = f"{loc}<br>{cnum}"
+                if events:
+                    label += f"\n{events}"
+
+                lats.append(lat)
+                lons.append(lon)
+                labels.append(label)
+                groups.append(f"{trk}_{cnum}")
+                track_groups.append(trk)
+                points_added += 1
+
+            if not lats:
+                msg = f"No mappable coordinates found for {track_numbers or container_numbers}."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            unique_containers = len(set(groups))
             yield _sse("tool_start", {"tool": "generate_plot", "query": title})
             if _FILE_TOOLS_AVAILABLE:
                 try:
                     file_info = _generate_plot(
                         plot_type="map",
                         title=title,
-                        data={"lat": lats, "lon": lons, "labels": labels, "groups": groups, "arrows": True},
+                        data={
+                            "lat": lats,
+                            "lon": lons,
+                            "labels": labels,
+                            "groups": groups,
+                            "track_groups": track_groups,
+                            "arrows": True,
+                            "hide_route_tracking": True,
+                        },
                         interactive=True,
                         file_store_path=self.file_store_path,
                     )
                     self.generated_files.append(file_info)
                     yield _sse("file_generated", file_info)
-                    return f"Container route map generated with {len(set(groups))} containers. Raw data:\n{result.text}"
+                    return (
+                        f"Container route map generated with {unique_containers} container(s) "
+                        f"and {points_added} stops."
+                    )
                 except Exception as exc:
                     error_msg = f"Container map error: {exc}"
                     logger.exception(error_msg)
