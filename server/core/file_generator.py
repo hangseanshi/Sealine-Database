@@ -905,7 +905,7 @@ def _plot_leaflet_map(
     """
     import json as _json
 
-    MAX_MAP_POINTS = 1000
+    MAX_MAP_POINTS = 5000
     map_truncated = False
 
     ROUTE_COLORS = [
