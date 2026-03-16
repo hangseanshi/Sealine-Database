@@ -261,6 +261,58 @@ CONTAINER_ROUTES_TOOL = {
 }
 
 
+CHOROPLETH_MAP_TOOL = {
+    "name": "show_choropleth_map",
+    "description": (
+        "Generate an interactive world choropleth map that shades countries by a numeric value "
+        "(e.g. number of trackings, containers, or shipments per country). "
+        "Use this tool when the user wants to visualise country-level data on a map "
+        "with darker colours indicating higher values. "
+        "The agent must first run execute_sql to get the country-value data, "
+        "then pass the results to this tool."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Map title shown at the top.",
+            },
+            "data": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "country": {"type": "string"},
+                        "value":   {"type": "number"},
+                        "label":   {"type": "string"},
+                    },
+                    "required": ["country", "value"],
+                },
+                "description": (
+                    "Array of {country, value} objects. "
+                    "Country names are matched case-insensitively (e.g. 'China', 'United States'). "
+                    "ISO alpha-2 codes also work (e.g. 'CN', 'US'). "
+                    "The 'label' field is optional — shown in tooltip alongside value."
+                ),
+            },
+            "color": {
+                "type": "string",
+                "description": (
+                    "Base hue for the choropleth gradient. "
+                    "Accepted values: 'blue' (default), 'red', 'green', 'orange', 'purple'."
+                ),
+            },
+            "value_label": {
+                "type": "string",
+                "description": "Label for the numeric value shown in tooltips (e.g. 'Trackings', 'Containers').",
+            },
+        },
+        "required": ["title", "data"],
+    },
+}
+
+
 def _get_plot_tool_def() -> dict:
     return GENERATE_PLOT_TOOL if _FILE_TOOLS_AVAILABLE else _FALLBACK_PLOT_TOOL
 
@@ -388,6 +440,7 @@ class SealineAgent:
         tools.append(_to_openai_tool(_get_excel_tool_def()))
         tools.append(_to_openai_tool(TRACKING_ROUTES_TOOL))
         tools.append(_to_openai_tool(CONTAINER_ROUTES_TOOL))
+        tools.append(_to_openai_tool(CHOROPLETH_MAP_TOOL))
         return tools
 
     # ------------------------------------------------------------------
@@ -928,6 +981,47 @@ class SealineAgent:
                     yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
                     return error_msg
             return result.text
+
+        elif name == "show_choropleth_map":
+            # ── Choropleth (country intensity) map ─────────────────────────
+            title       = tool_input.get("title") or "Country Map"
+            data        = tool_input.get("data") or []
+            color       = (tool_input.get("color") or "blue").lower().strip()
+            value_label = tool_input.get("value_label") or "Count"
+
+            if not data:
+                msg = "show_choropleth_map requires a non-empty data array."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            yield _sse("tool_start", {"tool": "generate_plot", "query": title})
+            if _FILE_TOOLS_AVAILABLE:
+                try:
+                    from server.core.file_generator import (
+                        _short_uuid, _slugify, ensure_file_store,
+                        _plot_choropleth_map,
+                    )
+                    file_id = _short_uuid()
+                    slug    = _slugify(title)
+                    ensure_file_store(self.file_store_path)
+                    file_info = _plot_choropleth_map(
+                        title=title,
+                        data=data,
+                        color=color,
+                        value_label=value_label,
+                        file_id=file_id,
+                        title_slug=slug,
+                        file_store_path=self.file_store_path,
+                    )
+                    self.generated_files.append(file_info)
+                    yield _sse("file_generated", file_info)
+                    return f"Choropleth map generated: {len(data)} country/region(s)."
+                except Exception as exc:
+                    error_msg = f"Choropleth map error: {exc}"
+                    logger.exception(error_msg)
+                    yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
+                    return error_msg
+            return f"show_choropleth_map: file tools unavailable."
 
         else:
             msg = f"Unknown tool: {name}"

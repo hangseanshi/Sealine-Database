@@ -1371,6 +1371,260 @@ legendCtrl.addTo(map);
     return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
 
 
+def _plot_choropleth_map(
+    title: str,
+    data: list[dict],
+    color: str,
+    value_label: str,
+    file_id: str,
+    title_slug: str,
+    file_store_path: str,
+) -> dict[str, Any]:
+    """Generate a Leaflet.js choropleth world map shading countries by value.
+
+    Args:
+        data: list of {country, value, label?} dicts
+        color: base hue ('blue','red','green','orange','purple')
+        value_label: tooltip label for the numeric value
+    """
+    import json as _json
+    import html as _html
+
+    # ── Base RGB for each hue ────────────────────────────────────────────
+    HUES = {
+        "blue":   (31,  71, 136),
+        "red":    (180,  20,  20),
+        "green":  ( 20, 120,  60),
+        "orange": (200,  90,   0),
+        "purple": ( 90,  20, 150),
+    }
+    base_r, base_g, base_b = HUES.get(color, HUES["blue"])
+
+    data_json    = _json.dumps(data,        ensure_ascii=False)
+    escaped_title = _html.escape(title)
+    escaped_vlabel = _html.escape(value_label)
+
+    _CHOROPLETH_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>|||TITLE|||</title>
+<script>
+window.onerror=function(m,s,l,c,e){
+  var el=document.getElementById('map-error');
+  if(el){el.style.display='block';el.innerHTML='<b>JS Error:</b> '+m+' (line '+l+')';}
+  return false;
+};
+</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<style>
+  html, body, #map { margin:0; padding:0; width:100%; height:100vh; overflow:hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .map-title {
+    position:absolute; top:12px; left:50%; transform:translateX(-50%);
+    z-index:1000; background:rgba(255,255,255,0.95);
+    padding:7px 20px; border-radius:8px;
+    font-size:15px; font-weight:700; color:#1F4788;
+    box-shadow:0 2px 10px rgba(0,0,0,0.18);
+    white-space:nowrap; pointer-events:none;
+  }
+  .legend {
+    background:rgba(255,255,255,0.97); padding:10px 14px;
+    border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,0.18);
+    font-size:12px; line-height:1.7; min-width:150px;
+  }
+  .legend h4 { margin:0 0 6px 0; font-size:13px; color:#1F4788; }
+  .legend-gradient {
+    width:120px; height:12px; border-radius:3px;
+    background: linear-gradient(to right, |||GRAD_LIGHT|||, |||GRAD_DARK|||);
+    margin-bottom:4px;
+  }
+  .legend-labels { display:flex; justify-content:space-between; font-size:10px; color:#555; }
+  .route-tooltip { background:rgba(255,255,255,0.97); border:1px solid #ccc; border-radius:5px; box-shadow:0 2px 8px rgba(0,0,0,0.15); }
+  #map-error {
+    display:none; position:absolute; top:60px; left:50%; transform:translateX(-50%);
+    z-index:9999; background:#fff3cd; border:1px solid #ffc107;
+    padding:10px 16px; border-radius:6px; font-size:13px;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="map-title">|||TITLE|||</div>
+<div id="map-error"></div>
+<script>
+try {
+var CHORO_DATA  = |||DATA_JSON|||;
+var VALUE_LABEL = "|||VALUE_LABEL|||";
+var BASE_RGB    = [|||BASE_R|||, |||BASE_G|||, |||BASE_B|||];
+
+// ── Country name → ISO numeric code ───────────────────────────────────────
+var COUNTRY_CODES = {
+  'afghanistan':4,'albania':8,'algeria':12,'angola':24,'argentina':32,
+  'australia':36,'austria':40,'bahrain':48,'bangladesh':50,'belgium':56,
+  'bolivia':68,'brazil':76,'bulgaria':100,'cambodia':116,'cameroon':120,
+  'canada':124,'chile':152,'china':156,'prc':156,'cn':156,'colombia':170,
+  'congo':180,'costa rica':188,'croatia':191,'cuba':192,'czech republic':203,
+  'czechia':203,'denmark':208,'dk':208,'dominican republic':214,
+  'ecuador':218,'egypt':818,'eg':818,'ethiopia':231,'finland':246,'fi':246,
+  'france':250,'fr':250,'germany':276,'de':276,'ghana':288,'greece':300,
+  'gr':300,'hong kong':344,'hk':344,'hungary':348,'india':356,'in':356,
+  'indonesia':360,'id':360,'iran':364,'iraq':368,'ireland':372,'israel':376,
+  'il':376,'italy':380,'it':380,'jamaica':388,'japan':392,'jp':392,
+  'jordan':400,'kenya':404,'south korea':410,'korea':410,'kr':410,
+  'kuwait':414,'kw':414,'laos':418,'latvia':428,'libya':434,'malaysia':458,
+  'my':458,'mexico':484,'mx':484,'morocco':504,'ma':504,'mozambique':508,
+  'myanmar':104,'burma':104,'mm':104,'netherlands':528,'nl':528,'holland':528,
+  'new zealand':554,'nz':554,'nicaragua':558,'nigeria':566,'ng':566,
+  'norway':578,'no':578,'oman':512,'om':512,'pakistan':586,'pk':586,
+  'panama':591,'pa':591,'peru':604,'philippines':608,'ph':608,'poland':616,
+  'pl':616,'portugal':620,'pt':620,'qatar':634,'qa':634,'romania':642,
+  'russia':643,'ru':643,'saudi arabia':682,'sa':682,'senegal':686,
+  'singapore':702,'sg':702,'somalia':706,'south africa':710,'za':710,
+  'spain':724,'es':724,'sri lanka':144,'lk':144,'sudan':729,'sd':729,
+  'sweden':752,'se':752,'switzerland':756,'ch':756,'taiwan':158,'tw':158,
+  'tanzania':834,'tz':834,'thailand':764,'th':764,'tunisia':788,'tn':788,
+  'turkey':792,'tr':792,'ukraine':804,'ua':804,'united arab emirates':784,
+  'uae':784,'ae':784,'united kingdom':826,'uk':826,'gb':826,'britain':826,
+  'united states':840,'usa':840,'us':840,'america':840,'uruguay':858,
+  'venezuela':862,'vietnam':704,'vn':704,'yemen':887,'ye':887,
+  'zambia':894,'zimbabwe':716
+};
+
+// ── Build code → {value, label, country} map ──────────────────────────────
+var codeMap = {};
+var maxVal  = 0, minVal = Infinity;
+CHORO_DATA.forEach(function(d) {
+  var key  = (d.country || '').toLowerCase().trim();
+  var code = COUNTRY_CODES[key];
+  if (code === undefined) return;
+  var v = +d.value || 0;
+  if (v > maxVal) maxVal = v;
+  if (v < minVal) minVal = v;
+  codeMap[code] = { value: v, label: d.label || d.country, country: d.country };
+});
+if (maxVal === 0) maxVal = 1;
+if (!isFinite(minVal)) minVal = 0;
+
+function valueToColor(v) {
+  // Log scale for better visual distribution across wide value ranges
+  var logMin = minVal > 0 ? Math.log(minVal) : 0;
+  var logMax = Math.log(maxVal + 1);
+  var logV   = Math.log(v + 1);
+  var t = logMax > logMin ? (logV - logMin) / (logMax - logMin) : 1;
+  t = Math.max(0.08, Math.min(1.0, t));  // keep min visible at 8%
+  // Light (t=0) → full base color (t=1); background blends to white
+  var r = Math.round(BASE_RGB[0] * t + 220 * (1 - t));
+  var g = Math.round(BASE_RGB[1] * t + 230 * (1 - t));
+  var b = Math.round(BASE_RGB[2] * t + 245 * (1 - t));
+  return { hex: '#' + [r,g,b].map(function(x){return Math.min(255,x).toString(16).padStart(2,'0');}).join(''), alpha: 0.25 + t * 0.55 };
+}
+
+function fmtNum(n) {
+  return n >= 1000 ? (n/1000).toFixed(1).replace(/\\.0$/,'') + 'k' : String(n);
+}
+
+// ── Init map ──────────────────────────────────────────────────────────────
+var map = L.map('map', {preferCanvas: true}).setView([20, 10], 2);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+  subdomains: 'abcd', maxZoom: 19
+}).addTo(map);
+[100,300,600,1200].forEach(function(ms){setTimeout(function(){map.invalidateSize(false);},ms);});
+window.addEventListener('resize', function(){map.invalidateSize(false);});
+
+// ── Render choropleth ─────────────────────────────────────────────────────
+fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+  .then(function(r){return r.json();})
+  .then(function(world){
+    if (typeof topojson === 'undefined') { throw new Error('topojson not loaded'); }
+    var countries = topojson.feature(world, world.objects.countries);
+    var geoLayer = L.geoJSON(countries, {
+      style: function(feature) {
+        var match = codeMap[+feature.id];
+        if (match) {
+          var c = valueToColor(match.value);
+          return { color: c.hex, weight: 0.8, opacity: 0.7, fillColor: c.hex, fillOpacity: c.alpha };
+        }
+        return { color: '#cccccc', weight: 0.5, opacity: 0.4, fillColor: '#f0f0f0', fillOpacity: 0.3 };
+      },
+      onEachFeature: function(feature, layer) {
+        var match = codeMap[+feature.id];
+        if (match) {
+          layer.bindTooltip(
+            '<div style="font-size:12px;line-height:1.6;padding:2px 4px;">'
+            + '<b>' + match.label + '</b><br>'
+            + VALUE_LABEL + ': <b>' + match.value.toLocaleString() + '</b>'
+            + '</div>',
+            { sticky: true, className: 'route-tooltip' }
+          );
+          layer.on('mouseover', function(e) {
+            layer.setStyle({ weight: 2, opacity: 1.0, fillOpacity: Math.min(1, (valueToColor(match.value).alpha + 0.2)) });
+          });
+          layer.on('mouseout', function(e) {
+            geoLayer.resetStyle(layer);
+          });
+        }
+      }
+    }).addTo(map);
+  }).catch(function(e){
+    var el = document.getElementById('map-error');
+    if (el) { el.style.display='block'; el.innerHTML='<b>Map Error:</b> ' + e.message; }
+  });
+
+// ── Legend ────────────────────────────────────────────────────────────────
+var legendCtrl = L.control({position: 'bottomright'});
+legendCtrl.onAdd = function() {
+  var div = L.DomUtil.create('div', 'legend');
+  div.innerHTML = '<h4>' + VALUE_LABEL + '</h4>'
+    + '<div class="legend-gradient"></div>'
+    + '<div class="legend-labels"><span>' + fmtNum(minVal) + '</span><span>' + fmtNum(maxVal) + '</span></div>';
+  L.DomEvent.disableScrollPropagation(div);
+  return div;
+};
+legendCtrl.addTo(map);
+
+} catch(e) {
+  var d = document.getElementById('map-error');
+  if (d) { d.style.display='block'; d.innerHTML='<b>Map Error:</b> ' + e.message; }
+}
+</script>
+</body>
+</html>
+"""
+
+    # Compute gradient light/dark hex for CSS
+    def _to_hex(r: int, g: int, b: int) -> str:
+        return "#{:02x}{:02x}{:02x}".format(r, g, b)
+
+    grad_light = _to_hex(
+        int(base_r * 0.08 + 220 * 0.92),
+        int(base_g * 0.08 + 230 * 0.92),
+        int(base_b * 0.08 + 245 * 0.92),
+    )
+    grad_dark  = _to_hex(base_r, base_g, base_b)
+
+    html_content = (
+        _CHOROPLETH_HTML
+        .replace("|||TITLE|||",       escaped_title)
+        .replace("|||DATA_JSON|||",   data_json)
+        .replace("|||VALUE_LABEL|||", escaped_vlabel)
+        .replace("|||BASE_R|||",      str(base_r))
+        .replace("|||BASE_G|||",      str(base_g))
+        .replace("|||BASE_B|||",      str(base_b))
+        .replace("|||GRAD_LIGHT|||",  grad_light)
+        .replace("|||GRAD_DARK|||",   grad_dark)
+    )
+    full_path = f"{file_store_path}/{file_id}_{title_slug}.html"
+    with open(full_path, "w", encoding="utf-8") as fh:
+        fh.write(html_content)
+    return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
+
+
 def _plot_container_route_map(
     title: str,
     data: dict[str, Any],
