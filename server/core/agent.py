@@ -360,6 +360,30 @@ CHOROPLETH_MAP_TOOL = {
 }
 
 
+GEOCODE_LOCATION_TOOL = {
+    "name": "geocode_location",
+    "description": (
+        "Look up the coordinates (latitude, longitude) and display name of any "
+        "place — city, port, country, address, or landmark — using OpenStreetMap Nominatim. "
+        "Call this BEFORE show_location_map whenever the user asks to show a specific location "
+        "on the map. Returns up to 3 candidate results with lat, lon, and display_name."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "Free-text place description: city, port name, LOCode, country, address, etc. "
+                    "E.g. 'Jawaharlal Nehru Port India', 'Shanghai', 'INNSA', 'Los Angeles CA USA'."
+                ),
+            }
+        },
+        "required": ["query"],
+    },
+}
+
+
 def _get_plot_tool_def() -> dict:
     return GENERATE_PLOT_TOOL if _FILE_TOOLS_AVAILABLE else _FALLBACK_PLOT_TOOL
 
@@ -487,6 +511,7 @@ class SealineAgent:
         tools.append(_to_openai_tool(_get_excel_tool_def()))
         tools.append(_to_openai_tool(TRACKING_ROUTES_TOOL))
         tools.append(_to_openai_tool(CONTAINER_ROUTES_TOOL))
+        tools.append(_to_openai_tool(GEOCODE_LOCATION_TOOL))
         tools.append(_to_openai_tool(LOCATION_BUBBLE_MAP_TOOL))
         tools.append(_to_openai_tool(CHOROPLETH_MAP_TOOL))
         return tools
@@ -1049,6 +1074,52 @@ class SealineAgent:
                     yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
                     return error_msg
             return result.text
+
+        elif name == "geocode_location":
+            # ── Geocode via OpenStreetMap Nominatim ─────────────────────────
+            import urllib.request as _urllib_req
+            import urllib.parse   as _urllib_parse
+
+            query = (tool_input.get("query") or "").strip()
+            if not query:
+                msg = "geocode_location requires a non-empty query string."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            yield _sse("tool_start", {"tool": "geocode_location", "query": query})
+
+            try:
+                url = (
+                    "https://nominatim.openstreetmap.org/search"
+                    f"?q={_urllib_parse.quote(query)}"
+                    "&format=json&limit=3&addressdetails=0"
+                )
+                req = _urllib_req.Request(
+                    url,
+                    headers={"User-Agent": "SeaLine-Tracker/1.0 (internal logistics tool)"},
+                )
+                with _urllib_req.urlopen(req, timeout=10) as resp:
+                    import json as _j
+                    results = _j.loads(resp.read().decode())
+
+                if not results:
+                    msg = f"No geocode results found for '{query}'."
+                    yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                    return msg
+
+                lines = [f"Geocode results for '{query}':"]
+                for r in results:
+                    lines.append(
+                        f"  display_name: {r['display_name']}, lat: {r['lat']}, lon: {r['lon']}"
+                    )
+                result_text = "\n".join(lines)
+                yield _sse("tool_result", {"tool": name, "result": result_text, "truncated": False})
+                return result_text
+
+            except Exception as exc:
+                msg = f"Geocoding failed: {exc}"
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
 
         elif name == "show_location_map":
             # ── Location bubble map ─────────────────────────────────────────
