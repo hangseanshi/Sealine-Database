@@ -137,7 +137,9 @@ TRACKING_ROUTES_TOOL = {
         "does NOT contain the word 'container' or 'containers'. "
         "DO NOT call this tool when the user mentions containers — use show_container_routes instead. "
         "Internally runs the Sealine_Route query and renders a Leaflet map with "
-        "Pre-Pol → Pol → Pod → Post-Pod stops, arrow lines, and per-stop tooltips."
+        "Pre-Pol → Pol → Pod → Post-Pod stops, arrow lines, and per-stop tooltips. "
+        "Supply either track_numbers (explicit list) OR subquery (a SQL SELECT that returns "
+        "TrackNumber values) — not both."
     ),
     "input_schema": {
         "type": "object",
@@ -145,14 +147,25 @@ TRACKING_ROUTES_TOOL = {
             "track_numbers": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "One or more tracking numbers (e.g. DALA71196300).",
+                "description": (
+                    "Explicit list of tracking numbers (e.g. ['DALA71196300']). "
+                    "Use this when the user provides specific tracking numbers directly."
+                ),
+            },
+            "subquery": {
+                "type": "string",
+                "description": (
+                    "A SQL SELECT statement whose result set is a single column of TrackNumber "
+                    "values, used as an IN subquery. "
+                    "Example: \"SELECT TrackNumber FROM Sealine_Order WHERE CustomerName = 'ABC'\". "
+                    "Use this when the tracking numbers must be derived from another table."
+                ),
             },
             "title": {
                 "type": "string",
                 "description": "Map title shown at the top.",
             },
         },
-        "required": ["track_numbers"],
     },
 }
 
@@ -164,7 +177,9 @@ CONTAINER_ROUTES_TOOL = {
         "'container' or 'containers'. "
         "DO NOT call this tool for generic route maps or tracking number maps — "
         "use generate_plot for those instead. "
-        "Each container gets its own coloured route with arrow lines between stops."
+        "Each container gets its own coloured route with arrow lines between stops. "
+        "Supply explicit lists (track_numbers / container_numbers) OR subqueries "
+        "(track_number_subquery / container_number_subquery) — not both kinds at once."
     ),
     "input_schema": {
         "type": "object",
@@ -172,12 +187,36 @@ CONTAINER_ROUTES_TOOL = {
             "track_numbers": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "One or more tracking numbers (e.g. DALA71196300). Use when user provides a tracking number.",
+                "description": (
+                    "Explicit list of tracking numbers (e.g. ['DALA71196300']). "
+                    "Shows all containers under those tracking numbers."
+                ),
             },
             "container_numbers": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "One or more container numbers (e.g. GAOU6335790). Use when user provides specific container numbers.",
+                "description": (
+                    "Explicit list of container numbers (e.g. ['GAOU6335790']). "
+                    "Use when the user supplies specific container numbers."
+                ),
+            },
+            "track_number_subquery": {
+                "type": "string",
+                "description": (
+                    "A SQL SELECT statement returning a single column of TrackNumber values, "
+                    "used as an IN subquery to filter by tracking number. "
+                    "Example: \"SELECT TrackNumber FROM Sealine_Order WHERE CustomerName = 'ABC'\". "
+                    "Use instead of track_numbers when the numbers must be derived from another table."
+                ),
+            },
+            "container_number_subquery": {
+                "type": "string",
+                "description": (
+                    "A SQL SELECT statement returning a single column of Container_NUMBER values, "
+                    "used as an IN subquery to filter by container number. "
+                    "Example: \"SELECT Container_NUMBER FROM Sealine_Container WHERE Size = '40'\". "
+                    "Use instead of container_numbers when the numbers must be derived from another table."
+                ),
             },
             "title": {
                 "type": "string",
@@ -461,19 +500,25 @@ class SealineAgent:
             # Triggered ONLY when user asks for route map WITHOUT "container".
             import re as _re
             track_numbers = tool_input.get("track_numbers") or []
-            title = tool_input.get("title") or "Tracking Route Map"
+            subquery      = (tool_input.get("subquery") or "").strip()
+            title         = tool_input.get("title") or "Tracking Route Map"
 
-            if not track_numbers:
-                msg = "show_tracking_routes requires track_numbers."
+            if not track_numbers and not subquery:
+                msg = "show_tracking_routes requires track_numbers or a subquery."
                 yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
                 return msg
 
-            vals = ", ".join(f"'{v}'" for v in track_numbers)
+            # Build the IN clause — either a literal list or an inner SELECT
+            if subquery:
+                in_clause = subquery
+            else:
+                in_clause = ", ".join(f"'{v}'" for v in track_numbers)
+
             sql = (
                 "SELECT TrackNumber, Lat, Lng, LocationName, "
                 "RouteType, MinOrderId, NoOfContainers, EventLines "
                 "FROM v_sealine_tracking_route "
-                f"WHERE TrackNumber IN ({vals}) "
+                f"WHERE TrackNumber IN ({in_clause}) "
                 "ORDER BY TrackNumber, MinOrderId ASC"
             )
 
@@ -645,25 +690,39 @@ class SealineAgent:
             # ── Dedicated container-route map tool ─────────────────────────
             # Uses v_sealine_container_route — Sealine_Container_Event MUST NOT
             # be referenced here or anywhere in the codebase.
-            track_numbers = tool_input.get("track_numbers") or []
-            container_numbers = tool_input.get("container_numbers") or []
+            # Columns available: Container_NUMBER, TrackNumber, Lat, Lng,
+            #   LocationName, MinOrderId, EventLines, Vessel  (no Country_Code / LOCode)
+            import re as _re
+            track_numbers             = tool_input.get("track_numbers") or []
+            container_numbers         = tool_input.get("container_numbers") or []
+            track_number_subquery     = (tool_input.get("track_number_subquery") or "").strip()
+            container_number_subquery = (tool_input.get("container_number_subquery") or "").strip()
             title = tool_input.get("title") or "Container Routes"
 
-            if not track_numbers and not container_numbers:
-                msg = "show_container_routes requires track_numbers or container_numbers."
+            if not track_numbers and not container_numbers \
+                    and not track_number_subquery and not container_number_subquery:
+                msg = ("show_container_routes requires track_numbers, container_numbers, "
+                       "track_number_subquery, or container_number_subquery.")
                 yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
                 return msg
 
-            if track_numbers:
-                vals = ", ".join(f"'{v}'" for v in track_numbers)
+            # Build WHERE clause — subqueries take precedence over literal lists
+            if track_number_subquery:
+                where = f"v.TrackNumber IN ({track_number_subquery})"
+            elif container_number_subquery:
+                where = f"v.Container_NUMBER IN ({container_number_subquery})"
+            elif track_numbers:
+                vals  = ", ".join(f"'{v}'" for v in track_numbers)
                 where = f"v.TrackNumber IN ({vals})"
             else:
-                vals = ", ".join(f"'{v}'" for v in container_numbers)
+                vals  = ", ".join(f"'{v}'" for v in container_numbers)
                 where = f"v.Container_NUMBER IN ({vals})"
 
+            # Columns: Container_NUMBER, TrackNumber, Lat, Lng, LocationName,
+            #          MinOrderId, EventLines, Vessel  (no Country_Code / LOCode)
             sql = (
                 "SELECT v.Container_NUMBER, v.TrackNumber, v.Lat, v.Lng, "
-                "v.LocationName, v.Country_Code, v.LOCode, v.MinOrderId, v.EventLines "
+                "v.LocationName, v.MinOrderId, v.EventLines, v.Vessel "
                 "FROM v_sealine_container_route v "
                 f"WHERE {where} AND v.Lat IS NOT NULL AND v.Lng IS NOT NULL "
                 "ORDER BY v.TrackNumber, v.Container_NUMBER, v.MinOrderId ASC"
@@ -675,16 +734,17 @@ class SealineAgent:
             yield _sse("tool_result", {"tool": "execute_sql", "result": result.text, "truncated": result.truncated})
 
             if result.error or not result.rows:
-                msg = f"No container route data found for {track_numbers or container_numbers}."
+                _filter_desc = (
+                    track_number_subquery or container_number_subquery
+                    or track_numbers or container_numbers
+                )
+                msg = f"No container route data found for {_filter_desc}."
                 yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
                 return msg
 
-            # ── Build map arrays from structured rows ─────────────────────
-            # Loop order: outer=TrackNumber, inner=Container_NUMBER, sorted by MinOrderId ASC
-            # groups       = TrackNumber_Container_NUMBER  → independent route per container
-            # track_groups = TrackNumber                   → same colour within one tracking number
-            lats, lons, labels, groups, track_groups = [], [], [], [], []
-
+            # ── Build structured map data ──────────────────────────────────
+            # locations: deduplicated by rounded lat/lon (one dot per unique position)
+            # routes:    one entry per container (TrackNumber-Container_NUMBER key)
             cols = [c.upper() for c in (result.columns or [])]
             try:
                 i_cnum   = cols.index("CONTAINER_NUMBER")
@@ -693,64 +753,130 @@ class SealineAgent:
                 i_lon    = cols.index("LNG")
                 i_loc    = cols.index("LOCATIONNAME")
                 i_events = cols.index("EVENTLINES")
+                i_vessel = cols.index("VESSEL")
             except ValueError:
-                i_cnum, i_trk, i_lat, i_lon, i_loc, i_events = 0, 1, 2, 3, 4, 8
+                i_cnum, i_trk, i_lat, i_lon, i_loc, i_events, i_vessel = 0, 1, 2, 3, 4, 6, 7
 
-            points_added = 0
+            loc_index: dict  = {}   # (roundlat, roundlon) → index in locations list
+            locations: list  = []   # [{name, lat, lon, containers: {key: {key, events}}}]
+            ctr_routes: dict = {}   # ckey → {trk, stops:[loc_idx], vessels:[vessel_str]}
+            ctr_order: list  = []   # insertion order of container keys
+
             for row in result.rows:
                 try:
-                    cnum   = str(row[i_cnum]).strip()
-                    trk    = str(row[i_trk]).strip()
-                    lat    = float(row[i_lat])
-                    lon    = float(row[i_lon])
-                    loc    = str(row[i_loc]).strip()
-                    events = str(row[i_events]).strip() if row[i_events] else ""
+                    cnum     = str(row[i_cnum]).strip()
+                    trk      = str(row[i_trk]).strip()
+                    lat      = float(row[i_lat])
+                    lon      = float(row[i_lon])
+                    loc_name = str(row[i_loc]).strip() if row[i_loc] else ""
+                    evraw    = str(row[i_events]).strip() if row[i_events] else ""
+                    vessel   = str(row[i_vessel]).strip() if row[i_vessel] else ""
                 except (ValueError, IndexError, TypeError):
                     continue
 
-                # Label format: location as popup header (blocks[0]);
-                # container + events in one block (blocks[1]) with \n separating
-                # event lines so the popup JS can render them as individual rows.
-                label = f"{loc}<br>{cnum}"
-                if events:
-                    label += f"\n{events}"
+                events = [e.strip() for e in _re.split(r'<BR>', evraw, flags=_re.IGNORECASE) if e.strip()]
+                ckey   = f"{trk}-{cnum}"          # display key: TrackNumber-ContainerNumber
 
-                lats.append(lat)
-                lons.append(lon)
-                labels.append(label)
-                groups.append(f"{trk}_{cnum}")
-                track_groups.append(trk)
-                points_added += 1
+                # Deduplicate locations
+                loc_key = (round(lat, 5), round(lon, 5))
+                if loc_key not in loc_index:
+                    loc_index[loc_key] = len(locations)
+                    locations.append({"name": loc_name, "lat": lat, "lon": lon, "containers": {}})
+                idx = loc_index[loc_key]
 
-            if not lats:
-                msg = f"No mappable coordinates found for {track_numbers or container_numbers}."
+                # Register this container's events at this location (first occurrence wins)
+                if ckey not in locations[idx]["containers"]:
+                    locations[idx]["containers"][ckey] = {"key": ckey, "events": events}
+
+                # Build ordered stop list per container
+                if ckey not in ctr_routes:
+                    ctr_routes[ckey] = {"trk": trk, "stops": [], "vessels": []}
+                    ctr_order.append(ckey)
+                ctr_routes[ckey]["stops"].append(idx)
+                ctr_routes[ckey]["vessels"].append(vessel)
+
+            # Convert location containers dict → sorted list (alphabetical by key)
+            for loc in locations:
+                loc["containers"] = sorted(loc["containers"].values(), key=lambda c: c["key"])
+
+            if not locations:
+                _filter_desc = (
+                    track_number_subquery or container_number_subquery
+                    or track_numbers or container_numbers
+                )
+                msg = f"No mappable coordinates found for {_filter_desc}."
                 yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
                 return msg
 
-            unique_containers = len(set(groups))
+            # ── Color: per-TrackNumber base hue, light→dark per container ──
+            TRACK_BASE_COLORS = [
+                "#27AE60", "#2980B9", "#E67E22", "#8E44AD", "#C0392B",
+                "#16A085", "#D35400", "#1A5276", "#6C3483", "#1E8449",
+            ]
+
+            def _blend(hex_col: str, factor: float) -> str:
+                r = int(hex_col[1:3], 16)
+                g = int(hex_col[3:5], 16)
+                b = int(hex_col[5:7], 16)
+                if factor <= 1.0:
+                    r = int(r * factor + 255 * (1 - factor))
+                    g = int(g * factor + 255 * (1 - factor))
+                    b = int(b * factor + 255 * (1 - factor))
+                else:
+                    r = max(0, int(r * (2 - factor)))
+                    g = max(0, int(g * (2 - factor)))
+                    b = max(0, int(b * (2 - factor)))
+                return "#%02x%02x%02x" % (min(255, r), min(255, g), min(255, b))
+
+            unique_trks   = list(dict.fromkeys(ctr_routes[k]["trk"] for k in ctr_order))
+            trk_base      = {t: TRACK_BASE_COLORS[i % len(TRACK_BASE_COLORS)]
+                             for i, t in enumerate(unique_trks)}
+            trk_containers: dict = {}
+            for ckey in ctr_order:
+                trk_containers.setdefault(ctr_routes[ckey]["trk"], []).append(ckey)
+
+            routes = []
+            for ckey in ctr_order:
+                cinfo    = ctr_routes[ckey]
+                t        = cinfo["trk"]
+                siblings = trk_containers[t]
+                n        = len(siblings)
+                pos      = siblings.index(ckey)
+                factor   = 0.35 + (pos / max(n - 1, 1)) * 0.75 if n > 1 else 0.85
+                routes.append({
+                    "key":     ckey,
+                    "trk":     t,
+                    "color":   _blend(trk_base[t], factor),
+                    "stops":   cinfo["stops"],
+                    "vessels": cinfo["vessels"],
+                })
+
+            map_data = {"locations": locations, "routes": routes}
+            unique_containers = len(routes)
+            unique_stops      = len(locations)
+
             yield _sse("tool_start", {"tool": "generate_plot", "query": title})
             if _FILE_TOOLS_AVAILABLE:
                 try:
-                    file_info = _generate_plot(
-                        plot_type="map",
+                    from server.core.file_generator import (
+                        _short_uuid, _slugify, ensure_file_store, _file_meta,
+                        _plot_container_route_map,
+                    )
+                    file_id   = _short_uuid()
+                    slug      = _slugify(title)
+                    ensure_file_store(self.file_store_path)
+                    file_info = _plot_container_route_map(
                         title=title,
-                        data={
-                            "lat": lats,
-                            "lon": lons,
-                            "labels": labels,
-                            "groups": groups,
-                            "track_groups": track_groups,
-                            "arrows": True,
-                            "hide_route_tracking": True,
-                        },
-                        interactive=True,
+                        data=map_data,
+                        file_id=file_id,
+                        title_slug=slug,
                         file_store_path=self.file_store_path,
                     )
                     self.generated_files.append(file_info)
                     yield _sse("file_generated", file_info)
                     return (
-                        f"Container route map generated with {unique_containers} container(s) "
-                        f"and {points_added} stops."
+                        f"Container route map generated: {unique_containers} container(s), "
+                        f"{unique_stops} unique stop(s)."
                     )
                 except Exception as exc:
                     error_msg = f"Container map error: {exc}"

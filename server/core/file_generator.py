@@ -1095,7 +1095,9 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
     return _sl;
   }
   var perpX = -dy/pixChord, perpY = dx/pixChord;
-  var pxOffset = pixChord * 0.20;
+  // Adaptive curve depth: flatter for nearby stops, gentler arc for distant ones
+  var curveFactor = pixChord < 80 ? 0.04 : pixChord < 250 ? 0.05 : 0.09;
+  var pxOffset = pixChord * curveFactor;
   var ctrl = unmerc(p1.x + dx/2 + perpX*laneOffset, p1.y + dy/2 - pxOffset + perpY*laneOffset);
   var ctrlLat = Math.min(85, Math.max(-85, ctrl.lat)), ctrlLon = ctrl.lng;
   var N = 50, curvePts = [];
@@ -1171,7 +1173,7 @@ ROUTE_DATA.routes.forEach(function(route) {
   for (var i = 0; i < route.stops.length - 1; i++) {
     var fi = route.stops[i], ti = route.stops[i+1];
     var key = Math.min(fi,ti) + '-' + Math.max(fi,ti);
-    var offset = (lineGroups[key] || 0) * 18;
+    var offset = (lineGroups[key] || 0) * 4;
     lineGroups[key] = (lineGroups[key] || 0) + 1;
     var fromLoc = ROUTE_DATA.locations[fi], toLoc = ROUTE_DATA.locations[ti];
     var tip = buildLineTooltip(route, fromLoc, toLoc);
@@ -1269,6 +1271,342 @@ legendCtrl.addTo(map);
     escaped_title = _html.escape(title)
     html_content = (
         _TRACKING_ROUTE_HTML
+        .replace("|||TITLE|||", escaped_title)
+        .replace("|||ROUTE_DATA_JSON|||", route_data_json)
+    )
+    full_path = f"{file_store_path}/{file_id}_{title_slug}.html"
+    with open(full_path, "w", encoding="utf-8") as fh:
+        fh.write(html_content)
+    return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
+
+
+def _plot_container_route_map(
+    title: str,
+    data: dict[str, Any],
+    file_id: str,
+    title_slug: str,
+    file_store_path: str,
+) -> dict[str, Any]:
+    """Generate a Leaflet.js container route map as a self-contained HTML file.
+
+    Data format expected:
+      locations: [{name, lat, lon, containers:[{key, events:[str]}]}]
+      routes:    [{key, trk, color, stops:[loc_idx], vessels:[str]}]
+
+    Features:
+      - One dot per unique lat/lon (shared across containers)
+      - Popup: LocationName header + sorted containers + events + scrollbar if >10 lines
+      - Route lines per container (no cross-container connections)
+      - Tooltip: ContainerKey – Vessel at From, From/To with last/first event
+      - Per-TrackNumber base color, light→dark gradient per container
+      - Legend per container with hover highlight
+      - War zone overlays with toggle
+      - CartoDB Voyager tiles (English labels)
+    """
+    import json as _json
+    import html as _html
+
+    _CONTAINER_ROUTE_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>|||TITLE|||</title>
+<script>
+window.onerror=function(m,s,l,c,e){
+  var el=document.getElementById('map-error');
+  if(el){el.style.display='block';el.innerHTML='<b>JS Error:</b> '+m+' (line '+l+')';}
+  return false;
+};
+</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body, #map { margin: 0; padding: 0; width: 100%; height: 100vh; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .map-title {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; background: rgba(255,255,255,0.95);
+    padding: 7px 20px; border-radius: 8px;
+    font-size: 15px; font-weight: 700; color: #1F4788;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+    white-space: nowrap; pointer-events: none;
+  }
+  .legend {
+    background: rgba(255,255,255,0.97); padding: 10px 14px;
+    border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+    font-size: 12px; line-height: 1.7; max-height: 340px; overflow-y: auto; min-width: 160px;
+  }
+  .legend h4 { margin: 0 0 6px 0; font-size: 13px; color: #1F4788; }
+  .legend-item { display: flex; align-items: center; gap: 7px; padding: 1px 4px; border-radius: 3px; cursor: pointer; }
+  .legend-item:hover { background: #f0f4ff; }
+  .leg-swatch { width: 22px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+  .route-tooltip { background: rgba(255,255,255,0.97); border: 1px solid #ccc; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .stop-label {
+    background: transparent !important; border: none !important;
+    box-shadow: none !important; font-size: 10px; font-weight: 600;
+    color: #1F4788; white-space: nowrap;
+  }
+  #map-error {
+    display: none; position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+    z-index: 9999; background: #fff3cd; border: 1px solid #ffc107;
+    padding: 10px 16px; border-radius: 6px; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="map-title">|||TITLE|||</div>
+<div id="map-error"></div>
+<script>
+try {
+var ROUTE_DATA = |||ROUTE_DATA_JSON|||;
+
+var map = L.map('map', {preferCanvas: true}).setView([20, 0], 2);
+// CartoDB Voyager — renders all labels in English
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd',
+  maxZoom: 20
+}).addTo(map);
+
+// \u2500\u2500 War Zone overlays \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+var WAR_ZONES = [
+  { name: "Red Sea / Gulf of Aden / Bab el-Mandeb (Houthi High Risk Zone)",
+    coords: [[18.0,37.8],[18.0,41.0],[16.0,43.2],[13.5,43.5],[12.5,43.5],[12.0,46.0],[12.5,49.0],[13.5,51.5],[16.5,53.0],[13.5,57.0],[11.0,60.0],[6.0,50.0],[-1.5,41.5],[3.0,42.0],[7.0,41.5],[10.5,42.5],[11.5,43.2],[14.0,41.0],[16.5,39.5],[18.0,37.8]] },
+  { name: "Gaza / Israel (Conflict Zone)",
+    coords: [[29.2,33.8],[29.2,36.5],[33.5,36.5],[33.5,33.8]] },
+  { name: "Ukraine / Black Sea (Conflict Zone)",
+    coords: [[41.0,28.0],[43.5,28.0],[46.5,30.0],[47.0,32.0],[47.1,35.0],[46.5,38.0],[47.5,38.5],[47.0,39.5],[45.5,41.5],[43.5,41.5],[41.5,41.5],[41.0,40.0],[41.0,28.0]] },
+  { name: "Sudan (Civil War Zone)",
+    coords: [[12.0,22.5],[22.0,22.5],[22.0,37.5],[18.5,40.0],[15.5,38.5],[12.5,36.5],[10.0,33.0],[10.0,23.5],[12.0,22.5]] }
+];
+var warZoneLayers = WAR_ZONES.map(function(z) {
+  var poly = L.polygon(z.coords, {
+    color: '#c0392b', weight: 1.5, opacity: 0.85,
+    fillColor: '#e74c3c', fillOpacity: 0.18, dashArray: '6,4', interactive: true
+  }).addTo(map);
+  poly.bindTooltip('<div style="font-weight:bold;color:#c0392b;font-size:12px;white-space:nowrap;">&#9888; ' + z.name + '</div>',
+    {sticky: true, className: 'route-tooltip'});
+  return poly;
+});
+var warZonesVisible = true;
+
+// \u2500\u2500 Arrow curve line helper \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
+  laneOffset = laneOffset || 0;
+  var WSIZ = 1024;
+  function merc(lat, lon) {
+    var s = Math.sin(lat * Math.PI / 180);
+    return { x: (lon + 180) / 360 * WSIZ, y: (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * WSIZ };
+  }
+  function unmerc(px, py) {
+    var n = Math.PI - 2 * Math.PI * py / WSIZ;
+    return { lat: 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))), lng: px / WSIZ * 360 - 180 };
+  }
+  var p1 = merc(fromPt[0], fromPt[1]), p2 = merc(toPt[0], toPt[1]);
+  var dx = p2.x - p1.x, dy = p2.y - p1.y;
+  var pixChord = Math.sqrt(dx*dx + dy*dy) || 1;
+  var STRAIGHT_THRESHOLD = 10;
+  if (pixChord < STRAIGHT_THRESHOLD) {
+    var _sl = L.polyline([fromPt, toPt], {color: color, weight: 1.8, opacity: 0.85}).addTo(map);
+    if (tooltipHtml) _sl.bindTooltip(tooltipHtml, {sticky: true, className: 'route-tooltip'});
+    var mLat = (fromPt[0]+toPt[0])/2, mLon = (fromPt[1]+toPt[1])/2;
+    var mAngle = Math.atan2(toPt[1]-fromPt[1], toPt[0]-fromPt[0]) * 180/Math.PI;
+    var mSvg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+      + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
+      + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
+    L.marker([mLat, mLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map);
+    return _sl;
+  }
+  var perpX = -dy/pixChord, perpY = dx/pixChord;
+  // Adaptive curve depth: flatter for nearby stops, gentler arc for distant ones
+  var curveFactor = pixChord < 80 ? 0.04 : pixChord < 250 ? 0.05 : 0.09;
+  var pxOffset = pixChord * curveFactor;
+  var ctrl = unmerc(p1.x + dx/2 + perpX*laneOffset, p1.y + dy/2 - pxOffset + perpY*laneOffset);
+  var ctrlLat = Math.min(85, Math.max(-85, ctrl.lat)), ctrlLon = ctrl.lng;
+  var N = 50, curvePts = [];
+  for (var i = 0; i <= N; i++) {
+    var t = i/N, u = 1-t;
+    curvePts.push([u*u*fromPt[0]+2*u*t*ctrlLat+t*t*toPt[0], u*u*fromPt[1]+2*u*t*ctrlLon+t*t*toPt[1]]);
+  }
+  var _cl = L.polyline(curvePts, {color: color, weight: 1.8, opacity: 0.85}).addTo(map);
+  if (tooltipHtml) _cl.bindTooltip(tooltipHtml, {sticky: true, className: 'route-tooltip'});
+  function bzPt(t) { var u=1-t; return [u*u*fromPt[0]+2*u*t*ctrlLat+t*t*toPt[0], u*u*fromPt[1]+2*u*t*ctrlLon+t*t*toPt[1]]; }
+  var arrPt = bzPt(0.75), pa = bzPt(0.73), pb = bzPt(0.77);
+  var angle = Math.atan2(pb[1]-pa[1], pb[0]-pa[0]) * 180/Math.PI;
+  var svg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+    + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
+    + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
+  L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map);
+  return _cl;
+}
+
+// \u2500\u2500 Popup: LocationName header + sorted containers + events \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+function buildContainerPopup(loc) {
+  // Count total lines: 1 (location header) + per container: 1 (name) + N (events)
+  var lineCount = 1;
+  loc.containers.forEach(function(c) { lineCount += 1 + c.events.length; });
+  var maxH    = lineCount > 10 ? '210px' : 'none';
+  var overflow = lineCount > 10 ? 'auto'  : 'visible';
+  var html = '<div style="max-height:' + maxH + ';overflow-y:' + overflow + ';min-width:220px;font-size:12px;line-height:1.6;">';
+  html += '<div style="font-weight:bold;text-decoration:underline;text-align:center;padding-bottom:4px;white-space:nowrap;">' + loc.name + '</div>';
+  loc.containers.forEach(function(c) {
+    html += '<div style="margin-top:4px;font-weight:600;">' + c.key + ':</div>';
+    c.events.forEach(function(ev) {
+      html += '<div style="padding-left:10px;color:#333;">&nbsp;|-- ' + ev + '</div>';
+    });
+  });
+  html += '</div>';
+  return html;
+}
+
+// \u2500\u2500 Tooltip for a route line segment \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Format: ContainerKey \u2013 Vessel at From
+//         From: location name
+//               |-- last event at From
+//         To:   location name
+//               |-- first event at To
+function buildContainerLineTooltip(route, fromLoc, toLoc, vessel) {
+  function eventsFor(loc, ckey) {
+    for (var i = 0; i < loc.containers.length; i++) {
+      if (loc.containers[i].key === ckey) return loc.containers[i].events;
+    }
+    return [];
+  }
+  var fromEvents = eventsFor(fromLoc, route.key);
+  var toEvents   = eventsFor(toLoc,   route.key);
+  var lastFrom   = fromEvents.length > 0 ? fromEvents[fromEvents.length - 1] : '';
+  var firstTo    = toEvents.length   > 0 ? toEvents[0]                       : '';
+
+  var html = '<div style="font-size:11px;line-height:1.7;white-space:nowrap;padding:4px 8px;min-width:200px;">';
+  // Header: ContainerKey \u2013 Vessel (bold, bottom-bordered)
+  var header = route.key;
+  if (vessel) header += ' \u2013 ' + vessel;
+  html += '<div style="font-weight:bold;border-bottom:1px solid #ddd;padding-bottom:3px;margin-bottom:4px;">' + header + '</div>';
+  // From
+  html += '<div><b>From:</b> ' + fromLoc.name + '</div>';
+  if (lastFrom) html += '<div style="padding-left:14px;">&nbsp;|-- ' + lastFrom + '</div>';
+  // To
+  html += '<div style="margin-top:3px;"><b>To:</b> ' + toLoc.name + '</div>';
+  if (firstTo) html += '<div style="padding-left:14px;">&nbsp;|-- ' + firstTo + '</div>';
+  html += '</div>';
+  return html;
+}
+
+// \u2500\u2500 Draw route lines (one per container, never crossing containers) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+var routeLayers = {};   // key -> { lines: [polyline,...], stopSet: Set of loc indices }
+var lineGroups  = {};   // "fi-ti" -> count (lane separation counter)
+ROUTE_DATA.routes.forEach(function(route) {
+  routeLayers[route.key] = { lines: [], stopSet: {} };
+  for (var i = 0; i < route.stops.length - 1; i++) {
+    var fi = route.stops[i], ti = route.stops[i + 1];
+    var pairKey = Math.min(fi, ti) + '-' + Math.max(fi, ti);
+    var offset = (lineGroups[pairKey] || 0) * 4;
+    lineGroups[pairKey] = (lineGroups[pairKey] || 0) + 1;
+    var fromLoc = ROUTE_DATA.locations[fi];
+    var toLoc   = ROUTE_DATA.locations[ti];
+    var vessel  = (route.vessels && i < route.vessels.length) ? route.vessels[i] : '';
+    var tip     = buildContainerLineTooltip(route, fromLoc, toLoc, vessel);
+    var line    = drawArrowLine([fromLoc.lat, fromLoc.lon], [toLoc.lat, toLoc.lon], route.color, offset, tip);
+    if (line) routeLayers[route.key].lines.push(line);
+  }
+  route.stops.forEach(function(si) { routeLayers[route.key].stopSet[si] = true; });
+});
+
+// \u2500\u2500 Draw location dots (one per unique location) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+var locationMarkers = [];
+ROUTE_DATA.locations.forEach(function(loc) {
+  var marker = L.circleMarker([loc.lat, loc.lon], {
+    radius: 7, color: '#ffffff', weight: 2,
+    fillColor: '#2c3e50', fillOpacity: 0.9
+  }).addTo(map);
+  marker.bindPopup(buildContainerPopup(loc), {maxWidth: 440});
+  marker.bindTooltip(loc.name, {permanent: true, className: 'stop-label', direction: 'top', offset: [0, -8]});
+  locationMarkers.push(marker);
+});
+
+// \u2500\u2500 Fit bounds \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+var allCoords = ROUTE_DATA.locations.map(function(l) { return [l.lat, l.lon]; });
+if (allCoords.length > 0) {
+  try { map.fitBounds(L.latLngBounds(allCoords), {padding: [60, 60], maxZoom: 10}); } catch(e) {}
+}
+
+// \u2500\u2500 Legend with hover highlight per container \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+var legendCtrl = L.control({position: 'bottomright'});
+legendCtrl.onAdd = function() {
+  var div = L.DomUtil.create('div', 'legend');
+  var h = '<h4>Legend</h4>';
+  ROUTE_DATA.routes.forEach(function(route) {
+    h += '<div class="legend-item" data-key="' + route.key + '">'
+      + '<div class="leg-swatch" style="background:' + route.color + '"></div>'
+      + '<span>' + route.key + '</span></div>';
+  });
+  h += '<div style="margin-top:8px;border-top:1px solid #ddd;padding-top:6px;">'
+     + '<div class="legend-item" id="wz-toggle" title="Click to toggle war zone overlay" style="cursor:pointer;">'
+     + '<div style="width:22px;height:11px;border:2px dashed #c0392b;background:rgba(231,76,60,0.18);flex-shrink:0;border-radius:2px;"></div>'
+     + '<span style="color:#c0392b;font-weight:600;">&#9888; War Zones</span></div></div>';
+  div.innerHTML = h;
+
+  // Hover: highlight hovered container, dim all others
+  div.querySelectorAll('[data-key]').forEach(function(item) {
+    var hoverKey = item.getAttribute('data-key');
+    item.addEventListener('mouseenter', function() {
+      ROUTE_DATA.routes.forEach(function(r) {
+        var rl = routeLayers[r.key];
+        if (!rl) return;
+        var dimmed = (r.key !== hoverKey);
+        rl.lines.forEach(function(l) {
+          l.setStyle({opacity: dimmed ? 0.10 : 1.0, weight: dimmed ? 1.0 : 3.0});
+        });
+      });
+      // Dim location dots not visited by hovered container
+      var hoverStops = routeLayers[hoverKey] ? routeLayers[hoverKey].stopSet : {};
+      locationMarkers.forEach(function(m, mi) {
+        var visited = !!hoverStops[mi];
+        m.setStyle({fillOpacity: visited ? 1.0 : 0.10, opacity: visited ? 1.0 : 0.15});
+      });
+    });
+    item.addEventListener('mouseleave', function() {
+      ROUTE_DATA.routes.forEach(function(r) {
+        var rl = routeLayers[r.key];
+        if (!rl) return;
+        rl.lines.forEach(function(l) { l.setStyle({opacity: 0.85, weight: 1.8}); });
+      });
+      locationMarkers.forEach(function(m) { m.setStyle({fillOpacity: 0.9, opacity: 1.0}); });
+    });
+  });
+
+  // War zone toggle
+  var wzToggle = div.querySelector('#wz-toggle');
+  if (wzToggle) {
+    wzToggle.addEventListener('click', function() {
+      warZonesVisible = !warZonesVisible;
+      warZoneLayers.forEach(function(l) {
+        if (warZonesVisible) { map.addLayer(l); } else { map.removeLayer(l); }
+      });
+      wzToggle.style.opacity = warZonesVisible ? '1' : '0.4';
+    });
+  }
+  L.DomEvent.disableScrollPropagation(div);
+  return div;
+};
+legendCtrl.addTo(map);
+
+} catch(e) {
+  var d = document.getElementById('map-error');
+  if (d) { d.style.display='block'; d.innerHTML='<b>Map Error:</b> ' + e.message; }
+}
+</script>
+</body>
+</html>
+"""
+
+    route_data_json = _json.dumps(data, ensure_ascii=False)
+    escaped_title   = _html.escape(title)
+    html_content = (
+        _CONTAINER_ROUTE_HTML
         .replace("|||TITLE|||", escaped_title)
         .replace("|||ROUTE_DATA_JSON|||", route_data_json)
     )
