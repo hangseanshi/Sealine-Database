@@ -532,13 +532,33 @@ class SealineAgent:
                         if _k in tool_input and _k not in data:
                             data[_k] = tool_input[_k]
 
-                    # Guard: for map type, refuse to render if no coordinate data supplied
+                    # Guard: generate_plot must NEVER be used for geographic/location maps.
+                    # Redirect the agent to the correct dedicated map tool.
                     if tool_input.get("plot_type") == "map":
                         _has_coords = bool(data.get("lat") or data.get("lon") or data.get("routes"))
                         if not _has_coords:
                             err = (
-                                "Map generation skipped: no coordinate data was provided. "
-                                "Please include lat/lon arrays or a routes array with lat/lon in the data parameter."
+                                "TOOL MISUSE: generate_plot must not be used for location/map displays. "
+                                "Use the correct tool instead: "
+                                "show_location_map — to mark/highlight a city, port, or location on a map. "
+                                "show_choropleth_map — to shade countries by count/intensity. "
+                                "show_tracking_routes — to show a tracking number route. "
+                                "show_container_routes — to show a container route. "
+                                "Re-invoke the correct tool now."
+                            )
+                            yield _sse("error", {"error": err, "code": "PLOT_ERROR", "recoverable": True})
+                            return err
+                        # Even with coords, warn that dedicated tools are preferred
+                        _highlight_only = (
+                            bool(data.get("highlight_regions"))
+                            and not data.get("lat")
+                            and not data.get("routes")
+                        )
+                        if _highlight_only:
+                            err = (
+                                "TOOL MISUSE: For country highlights without routes, use show_choropleth_map. "
+                                "For marking a location, use show_location_map. "
+                                "Re-invoke the correct tool now."
                             )
                             yield _sse("error", {"error": err, "code": "PLOT_ERROR", "recoverable": True})
                             return err
