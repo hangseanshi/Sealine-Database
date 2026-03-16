@@ -261,6 +261,53 @@ CONTAINER_ROUTES_TOOL = {
 }
 
 
+LOCATION_BUBBLE_MAP_TOOL = {
+    "name": "show_location_map",
+    "description": (
+        "Display one or more locations as bubble markers on an interactive world map. "
+        "Use when the user wants to highlight, pin, or mark specific cities, ports, "
+        "or locations — WITHOUT showing shipping routes between them. "
+        "The agent must run execute_sql first to obtain lat/lon coordinates "
+        "(query Sealine_Locations for port lat/lng), then pass the results here. "
+        "Bubbles can optionally be sized by a numeric value (e.g. container count per port)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Map title shown at the top.",
+            },
+            "locations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name":  {"type": "string",  "description": "Display name (city/port/location)"},
+                        "lat":   {"type": "number",  "description": "Latitude"},
+                        "lon":   {"type": "number",  "description": "Longitude"},
+                        "value": {"type": "number",  "description": "Optional numeric value — sizes the bubble"},
+                        "label": {"type": "string",  "description": "Optional extra line shown in tooltip"},
+                        "color": {"type": "string",  "description": "Optional bubble color (hex or CSS color)"},
+                    },
+                    "required": ["name", "lat", "lon"],
+                },
+                "description": "List of locations to display as bubbles.",
+            },
+            "value_label": {
+                "type": "string",
+                "description": "Label for the value shown in tooltips (e.g. 'Containers', 'Trackings').",
+            },
+            "color": {
+                "type": "string",
+                "description": "Default bubble color for all locations (e.g. '#2980B9'). Overridden per-item by location.color.",
+            },
+        },
+        "required": ["title", "locations"],
+    },
+}
+
+
 CHOROPLETH_MAP_TOOL = {
     "name": "show_choropleth_map",
     "description": (
@@ -440,6 +487,7 @@ class SealineAgent:
         tools.append(_to_openai_tool(_get_excel_tool_def()))
         tools.append(_to_openai_tool(TRACKING_ROUTES_TOOL))
         tools.append(_to_openai_tool(CONTAINER_ROUTES_TOOL))
+        tools.append(_to_openai_tool(LOCATION_BUBBLE_MAP_TOOL))
         tools.append(_to_openai_tool(CHOROPLETH_MAP_TOOL))
         return tools
 
@@ -981,6 +1029,47 @@ class SealineAgent:
                     yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
                     return error_msg
             return result.text
+
+        elif name == "show_location_map":
+            # ── Location bubble map ─────────────────────────────────────────
+            title       = tool_input.get("title") or "Location Map"
+            locations   = tool_input.get("locations") or []
+            value_label = tool_input.get("value_label") or "Value"
+            color       = tool_input.get("color") or "#2980B9"
+
+            if not locations:
+                msg = "show_location_map requires a non-empty locations array with lat/lon."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            yield _sse("tool_start", {"tool": "generate_plot", "query": title})
+            if _FILE_TOOLS_AVAILABLE:
+                try:
+                    from server.core.file_generator import (
+                        _short_uuid, _slugify, ensure_file_store,
+                        _plot_location_bubble_map,
+                    )
+                    file_id = _short_uuid()
+                    slug    = _slugify(title)
+                    ensure_file_store(self.file_store_path)
+                    file_info = _plot_location_bubble_map(
+                        title=title,
+                        locations=locations,
+                        value_label=value_label,
+                        default_color=color,
+                        file_id=file_id,
+                        title_slug=slug,
+                        file_store_path=self.file_store_path,
+                    )
+                    self.generated_files.append(file_info)
+                    yield _sse("file_generated", file_info)
+                    return f"Location map generated: {len(locations)} location(s)."
+                except Exception as exc:
+                    error_msg = f"Location map error: {exc}"
+                    logger.exception(error_msg)
+                    yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
+                    return error_msg
+            return "show_location_map: file tools unavailable."
 
         elif name == "show_choropleth_map":
             # ── Choropleth (country intensity) map ─────────────────────────

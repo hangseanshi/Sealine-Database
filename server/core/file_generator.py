@@ -1371,6 +1371,196 @@ legendCtrl.addTo(map);
     return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
 
 
+def _plot_location_bubble_map(
+    title: str,
+    locations: list[dict],
+    value_label: str,
+    default_color: str,
+    file_id: str,
+    title_slug: str,
+    file_store_path: str,
+) -> dict[str, Any]:
+    """Generate a Leaflet.js bubble/pin map for a list of locations.
+
+    Each location is shown as a circle marker. If `value` is present the
+    circles are proportionally sized. Tooltip shows name + optional value.
+    """
+    import json as _json
+    import html as _html
+
+    loc_json      = _json.dumps(locations, ensure_ascii=False)
+    escaped_title = _html.escape(title)
+    escaped_vlabel = _html.escape(value_label)
+
+    _BUBBLE_MAP_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>|||TITLE|||</title>
+<script>
+window.onerror=function(m,s,l,c,e){
+  var el=document.getElementById('map-error');
+  if(el){el.style.display='block';el.innerHTML='<b>JS Error:</b> '+m+' (line '+l+')';}
+  return false;
+};
+</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body, #map { margin:0; padding:0; width:100%; height:100vh; overflow:hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .map-title {
+    position:absolute; top:12px; left:50%; transform:translateX(-50%);
+    z-index:1000; background:rgba(255,255,255,0.95);
+    padding:7px 20px; border-radius:8px;
+    font-size:15px; font-weight:700; color:#1F4788;
+    box-shadow:0 2px 10px rgba(0,0,0,0.18);
+    white-space:nowrap; pointer-events:none;
+  }
+  .legend {
+    background:rgba(255,255,255,0.97); padding:10px 14px;
+    border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,0.18);
+    font-size:12px; line-height:1.7; min-width:130px;
+  }
+  .legend h4 { margin:0 0 6px 0; font-size:13px; color:#1F4788; }
+  .legend-item { display:flex; align-items:center; gap:7px; }
+  .leg-bubble { border-radius:50%; border:2px solid rgba(255,255,255,0.9); flex-shrink:0; }
+  .bubble-tooltip { background:rgba(255,255,255,0.97); border:1px solid #ccc; border-radius:5px; box-shadow:0 2px 8px rgba(0,0,0,0.15); }
+  .stop-label {
+    background:transparent !important; border:none !important;
+    box-shadow:none !important; font-size:10px; font-weight:600;
+    color:#1F4788; white-space:nowrap; pointer-events:none;
+  }
+  #map-error {
+    display:none; position:absolute; top:60px; left:50%; transform:translateX(-50%);
+    z-index:9999; background:#fff3cd; border:1px solid #ffc107;
+    padding:10px 16px; border-radius:6px; font-size:13px;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="map-title">|||TITLE|||</div>
+<div id="map-error"></div>
+<script>
+try {
+var LOCS        = |||LOCS_JSON|||;
+var VALUE_LABEL = "|||VALUE_LABEL|||";
+var DEF_COLOR   = "|||DEF_COLOR|||";
+
+var map = L.map('map', {preferCanvas: true}).setView([20, 10], 2);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+  subdomains: 'abcd', maxZoom: 19
+}).addTo(map);
+[100,300,600,1200].forEach(function(ms){setTimeout(function(){map.invalidateSize(false);},ms);});
+window.addEventListener('resize', function(){map.invalidateSize(false);});
+
+// ── Compute value range for proportional sizing ───────────────────────────
+var hasValues = LOCS.some(function(l){return l.value !== undefined && l.value !== null;});
+var maxVal = 0, minVal = Infinity;
+if (hasValues) {
+  LOCS.forEach(function(l) {
+    var v = +l.value || 0;
+    if (v > maxVal) maxVal = v;
+    if (v < minVal) minVal = v;
+  });
+  if (!isFinite(minVal)) minVal = 0;
+  if (maxVal === 0) maxVal = 1;
+}
+
+var MIN_R = 8, MAX_R = 36;
+function radius(v) {
+  if (!hasValues) return 10;
+  var t = maxVal > minVal ? (v - minVal) / (maxVal - minVal) : 1;
+  return MIN_R + t * (MAX_R - MIN_R);
+}
+function fmtNum(n) {
+  return n >= 1000 ? (n/1000).toFixed(1).replace(/\\.0$/,'') + 'k' : String(n);
+}
+
+// ── Draw bubbles ──────────────────────────────────────────────────────────
+var allCoords = [];
+LOCS.forEach(function(loc) {
+  var lat = +loc.lat, lon = +loc.lon;
+  if (isNaN(lat) || isNaN(lon)) return;
+  allCoords.push([lat, lon]);
+  var v     = (loc.value !== undefined && loc.value !== null) ? +loc.value : null;
+  var r     = radius(v !== null ? v : 0);
+  var col   = loc.color || DEF_COLOR;
+  var circle = L.circleMarker([lat, lon], {
+    radius: r,
+    color: '#ffffff', weight: 2,
+    fillColor: col, fillOpacity: 0.80
+  }).addTo(map);
+
+  // Tooltip
+  var tip = '<div style="font-size:12px;line-height:1.6;padding:2px 4px;">'
+    + '<b>' + (loc.name || '') + '</b>';
+  if (v !== null) tip += '<br>' + VALUE_LABEL + ': <b>' + (v.toLocaleString ? v.toLocaleString() : v) + '</b>';
+  if (loc.label) tip += '<br><span style="color:#555">' + loc.label + '</span>';
+  tip += '</div>';
+  circle.bindTooltip(tip, {sticky: true, className: 'bubble-tooltip'});
+
+  // Permanent label
+  L.tooltip({permanent: true, className: 'stop-label', direction: 'top', offset: [0, -(r+4)]})
+    .setContent(loc.name || '')
+    .setLatLng([lat, lon])
+    .addTo(map);
+});
+
+// ── Fit bounds ────────────────────────────────────────────────────────────
+if (allCoords.length > 0) {
+  try { map.fitBounds(L.latLngBounds(allCoords), {padding: [60, 60], maxZoom: 10}); } catch(e) {}
+}
+
+// ── Legend ────────────────────────────────────────────────────────────────
+if (hasValues) {
+  var legendCtrl = L.control({position: 'bottomright'});
+  legendCtrl.onAdd = function() {
+    var div = L.DomUtil.create('div', 'legend');
+    var h = '<h4>' + VALUE_LABEL + '</h4>';
+    var steps = [
+      {label: fmtNum(maxVal), r: MAX_R},
+      {label: fmtNum(Math.round((maxVal + minVal) / 2)), r: Math.round((MIN_R + MAX_R) / 2)},
+      {label: fmtNum(minVal), r: MIN_R}
+    ];
+    steps.forEach(function(s) {
+      h += '<div class="legend-item" style="margin-bottom:4px;">'
+        + '<div class="leg-bubble" style="width:' + (s.r*2) + 'px;height:' + (s.r*2) + 'px;background:' + DEF_COLOR + ';opacity:0.8;"></div>'
+        + '<span>' + s.label + '</span></div>';
+    });
+    div.innerHTML = h;
+    L.DomEvent.disableScrollPropagation(div);
+    return div;
+  };
+  legendCtrl.addTo(map);
+}
+
+} catch(e) {
+  var d = document.getElementById('map-error');
+  if (d) { d.style.display='block'; d.innerHTML='<b>Map Error:</b> ' + e.message; }
+}
+</script>
+</body>
+</html>
+"""
+
+    html_content = (
+        _BUBBLE_MAP_HTML
+        .replace("|||TITLE|||",      escaped_title)
+        .replace("|||LOCS_JSON|||",  loc_json)
+        .replace("|||VALUE_LABEL|||", escaped_vlabel)
+        .replace("|||DEF_COLOR|||",  default_color)
+    )
+    full_path = f"{file_store_path}/{file_id}_{title_slug}.html"
+    with open(full_path, "w", encoding="utf-8") as fh:
+        fh.write(html_content)
+    return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
+
+
 def _plot_choropleth_map(
     title: str,
     data: list[dict],
