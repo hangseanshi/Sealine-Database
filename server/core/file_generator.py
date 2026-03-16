@@ -1173,7 +1173,7 @@ ROUTE_DATA.routes.forEach(function(route) {
   for (var i = 0; i < route.stops.length - 1; i++) {
     var fi = route.stops[i], ti = route.stops[i+1];
     var key = Math.min(fi,ti) + '-' + Math.max(fi,ti);
-    var offset = (lineGroups[key] || 0) * 4;
+    var offset = (lineGroups[key] || 0) * 2;
     lineGroups[key] = (lineGroups[key] || 0) + 1;
     var fromLoc = ROUTE_DATA.locations[fi], toLoc = ROUTE_DATA.locations[ti];
     var tip = buildLineTooltip(route, fromLoc, toLoc);
@@ -1503,7 +1503,7 @@ ROUTE_DATA.routes.forEach(function(route) {
   for (var i = 0; i < route.stops.length - 1; i++) {
     var fi = route.stops[i], ti = route.stops[i + 1];
     var pairKey = Math.min(fi, ti) + '-' + Math.max(fi, ti);
-    var offset = (lineGroups[pairKey] || 0) * 4;
+    var offset = (lineGroups[pairKey] || 0) * 2;
     lineGroups[pairKey] = (lineGroups[pairKey] || 0) + 1;
     var fromLoc = ROUTE_DATA.locations[fi];
     var toLoc   = ROUTE_DATA.locations[ti];
