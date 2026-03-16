@@ -379,6 +379,18 @@ def _plot_static(
         ax.scatter(x, y, alpha=0.7, color=HEADER_COLOR_HEX, edgecolors="white")
 
     elif plot_type == "pie":
+        # Align labels/values to the shorter array, then cap at top 20 slices
+        n = min(len(labels), len(values))
+        labels, values = list(labels[:n]), list(values[:n])
+        PIE_MAX = 20
+        if n > PIE_MAX:
+            # Sort by value descending, keep top PIE_MAX-1, group rest as Other
+            paired = sorted(zip(values, labels), reverse=True)
+            top_vals  = [v for v, _ in paired[:PIE_MAX - 1]]
+            top_lbls  = [l for _, l in paired[:PIE_MAX - 1]]
+            other_val = sum(v for v, _ in paired[PIE_MAX - 1:])
+            values = top_vals + [other_val]
+            labels = top_lbls + ["Other"]
         # Pie uses fig-level; close the original figure to prevent leak,
         # then create a fresh one.
         plt.close(fig)
@@ -942,6 +954,7 @@ window.onerror=function(m,s,l,c,e){
 </script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <style>
   html, body, #map { margin: 0; padding: 0; width: 100%; height: 100vh; overflow: hidden; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
@@ -963,6 +976,7 @@ window.onerror=function(m,s,l,c,e){
   .legend-item:hover { background: #f0f4ff; }
   .leg-line { width: 22px; height: 3px; border-radius: 2px; flex-shrink: 0; }
   .leg-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.8); flex-shrink: 0; }
+  .leg-zone { width: 22px; height: 11px; border-radius: 3px; flex-shrink: 0; }
   .route-tooltip { background: rgba(255,255,255,0.97); border: 1px solid #ccc; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
   .stop-label {
     background: transparent !important;
@@ -1067,7 +1081,77 @@ var warZoneLayers = WAR_ZONES.map(function(z) {
 });
 var warZonesVisible = true;
 
-// \u2500\u2500 Arrow line helper (returns polyline for highlight control) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── Country / region highlights (TopoJSON world atlas) ─────────────────────
+var COUNTRY_CODES_TRK = {
+  'afghanistan':4,'albania':8,'algeria':12,'angola':24,'argentina':32,
+  'australia':36,'austria':40,'bahrain':48,'bangladesh':50,'belgium':56,
+  'bolivia':68,'brazil':76,'bulgaria':100,'cambodia':116,'cameroon':120,
+  'canada':124,'chile':152,'china':156,'prc':156,'cn':156,'colombia':170,
+  'congo':180,'costa rica':188,'croatia':191,'cuba':192,'czech republic':203,
+  'czechia':203,'denmark':208,'dk':208,'dominican republic':214,
+  'ecuador':218,'egypt':818,'eg':818,'ethiopia':231,'finland':246,'fi':246,
+  'france':250,'fr':250,'germany':276,'de':276,'ghana':288,'greece':300,
+  'gr':300,'hong kong':344,'hk':344,'hungary':348,'india':356,'in':356,
+  'indonesia':360,'id':360,'iran':364,'iraq':368,'ireland':372,'israel':376,
+  'il':376,'italy':380,'it':380,'jamaica':388,'japan':392,'jp':392,
+  'jordan':400,'kenya':404,'south korea':410,'korea':410,'kr':410,
+  'kuwait':414,'kw':414,'laos':418,'latvia':428,'libya':434,'malaysia':458,
+  'my':458,'mexico':484,'mx':484,'morocco':504,'ma':504,'mozambique':508,
+  'myanmar':104,'burma':104,'mm':104,'netherlands':528,'nl':528,'holland':528,
+  'new zealand':554,'nz':554,'nicaragua':558,'nigeria':566,'ng':566,
+  'norway':578,'no':578,'oman':512,'om':512,'pakistan':586,'pk':586,
+  'panama':591,'pa':591,'peru':604,'philippines':608,'ph':608,'poland':616,
+  'pl':616,'portugal':620,'pt':620,'qatar':634,'qa':634,'romania':642,
+  'russia':643,'ru':643,'saudi arabia':682,'sa':682,'senegal':686,
+  'singapore':702,'sg':702,'somalia':706,'south africa':710,'za':710,
+  'spain':724,'es':724,'sri lanka':144,'lk':144,'sudan':729,'sd':729,
+  'sweden':752,'se':752,'switzerland':756,'ch':756,'taiwan':158,'tw':158,
+  'tanzania':834,'tz':834,'thailand':764,'th':764,'tunisia':788,'tn':788,
+  'turkey':792,'tr':792,'ukraine':804,'ua':804,'united arab emirates':784,
+  'uae':784,'ae':784,'united kingdom':826,'uk':826,'gb':826,'britain':826,
+  'united states':840,'usa':840,'us':840,'america':840,'uruguay':858,
+  'venezuela':862,'vietnam':704,'vn':704,'yemen':887,'ye':887,
+  'zambia':894,'zimbabwe':716
+};
+(function() {
+  var regions = ROUTE_DATA.highlight_regions || [];
+  if (!regions.length) return;
+  var codeColorMap = {};
+  regions.forEach(function(r) {
+    var key = (r.name || '').toLowerCase().trim();
+    var code = COUNTRY_CODES_TRK[key];
+    if (code !== undefined) codeColorMap[code] = {color: r.color, name: r.name};
+  });
+  if (!Object.keys(codeColorMap).length) return;
+  fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+    .then(function(res) { return res.json(); })
+    .then(function(world) {
+      if (typeof topojson === 'undefined') return;
+      var countries = topojson.feature(world, world.objects.countries);
+      L.geoJSON(countries, {
+        style: function(feature) {
+          var match = codeColorMap[+feature.id];
+          if (match) {
+            var m = (match.color||'').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
+            var hex = match.color;
+            var alpha = 0.30;
+            if (m) {
+              hex = '#' + [+m[1],+m[2],+m[3]].map(function(v){return v.toString(16).padStart(2,'0');}).join('');
+              alpha = m[4] !== undefined ? +m[4] : 0.30;
+            }
+            return {color: hex, weight: 1.5, opacity: 0.8, fillColor: hex, fillOpacity: alpha};
+          }
+          return {fillOpacity: 0, opacity: 0, weight: 0};
+        },
+        onEachFeature: function(feature, layer) {
+          var match = codeColorMap[+feature.id];
+          if (match) layer.bindTooltip('<b>' + match.name + '</b>', {sticky: true});
+        }
+      }).addTo(map);
+    }).catch(function() {});
+})();
+
+// ── Arrow line helper (returns polyline for highlight control) ──────────────
 function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
   laneOffset = laneOffset || 0;
   var WSIZ = 1024;
@@ -1212,6 +1296,13 @@ legendCtrl.onAdd = function() {
       + '<div class="leg-dot" style="background:' + route.color + '"></div>'
       + '<span>' + route.trk + '</span></div>';
   });
+  (ROUTE_DATA.highlight_regions || []).forEach(function(r) {
+    var m = (r.color||'').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+    var hex = r.color || '#ffa500';
+    if (m) hex = '#' + [+m[1],+m[2],+m[3]].map(function(v){return v.toString(16).padStart(2,'0');}).join('');
+    h += '<div class="legend-item"><div class="leg-zone" style="background:' + hex
+       + ';opacity:0.55;border:2px solid ' + hex + '"></div><span>' + r.name + '</span></div>';
+  });
   h += '<div style="margin-top:8px;border-top:1px solid #ddd;padding-top:6px;">'
      + '<div class="legend-item" id="wz-toggle" title="Click to toggle war zone overlay" style="cursor:pointer;">'
      + '<div style="width:22px;height:11px;border:2px dashed #c0392b;background:rgba(231,76,60,0.18);flex-shrink:0;border-radius:2px;"></div>'
@@ -1322,6 +1413,7 @@ window.onerror=function(m,s,l,c,e){
 </script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <style>
   html, body, #map { margin: 0; padding: 0; width: 100%; height: 100vh; overflow: hidden; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
@@ -1342,6 +1434,7 @@ window.onerror=function(m,s,l,c,e){
   .legend-item { display: flex; align-items: center; gap: 7px; padding: 1px 4px; border-radius: 3px; cursor: pointer; }
   .legend-item:hover { background: #f0f4ff; }
   .leg-swatch { width: 22px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+  .leg-zone { width: 22px; height: 11px; border-radius: 3px; flex-shrink: 0; }
   .route-tooltip { background: rgba(255,255,255,0.97); border: 1px solid #ccc; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
   .stop-label {
     background: transparent !important; border: none !important;
@@ -1393,7 +1486,77 @@ var warZoneLayers = WAR_ZONES.map(function(z) {
 });
 var warZonesVisible = true;
 
-// \u2500\u2500 Arrow curve line helper \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// ── Country / region highlights (TopoJSON world atlas) ─────────────────────
+var COUNTRY_CODES_CTR = {
+  'afghanistan':4,'albania':8,'algeria':12,'angola':24,'argentina':32,
+  'australia':36,'austria':40,'bahrain':48,'bangladesh':50,'belgium':56,
+  'bolivia':68,'brazil':76,'bulgaria':100,'cambodia':116,'cameroon':120,
+  'canada':124,'chile':152,'china':156,'prc':156,'cn':156,'colombia':170,
+  'congo':180,'costa rica':188,'croatia':191,'cuba':192,'czech republic':203,
+  'czechia':203,'denmark':208,'dk':208,'dominican republic':214,
+  'ecuador':218,'egypt':818,'eg':818,'ethiopia':231,'finland':246,'fi':246,
+  'france':250,'fr':250,'germany':276,'de':276,'ghana':288,'greece':300,
+  'gr':300,'hong kong':344,'hk':344,'hungary':348,'india':356,'in':356,
+  'indonesia':360,'id':360,'iran':364,'iraq':368,'ireland':372,'israel':376,
+  'il':376,'italy':380,'it':380,'jamaica':388,'japan':392,'jp':392,
+  'jordan':400,'kenya':404,'south korea':410,'korea':410,'kr':410,
+  'kuwait':414,'kw':414,'laos':418,'latvia':428,'libya':434,'malaysia':458,
+  'my':458,'mexico':484,'mx':484,'morocco':504,'ma':504,'mozambique':508,
+  'myanmar':104,'burma':104,'mm':104,'netherlands':528,'nl':528,'holland':528,
+  'new zealand':554,'nz':554,'nicaragua':558,'nigeria':566,'ng':566,
+  'norway':578,'no':578,'oman':512,'om':512,'pakistan':586,'pk':586,
+  'panama':591,'pa':591,'peru':604,'philippines':608,'ph':608,'poland':616,
+  'pl':616,'portugal':620,'pt':620,'qatar':634,'qa':634,'romania':642,
+  'russia':643,'ru':643,'saudi arabia':682,'sa':682,'senegal':686,
+  'singapore':702,'sg':702,'somalia':706,'south africa':710,'za':710,
+  'spain':724,'es':724,'sri lanka':144,'lk':144,'sudan':729,'sd':729,
+  'sweden':752,'se':752,'switzerland':756,'ch':756,'taiwan':158,'tw':158,
+  'tanzania':834,'tz':834,'thailand':764,'th':764,'tunisia':788,'tn':788,
+  'turkey':792,'tr':792,'ukraine':804,'ua':804,'united arab emirates':784,
+  'uae':784,'ae':784,'united kingdom':826,'uk':826,'gb':826,'britain':826,
+  'united states':840,'usa':840,'us':840,'america':840,'uruguay':858,
+  'venezuela':862,'vietnam':704,'vn':704,'yemen':887,'ye':887,
+  'zambia':894,'zimbabwe':716
+};
+(function() {
+  var regions = ROUTE_DATA.highlight_regions || [];
+  if (!regions.length) return;
+  var codeColorMap = {};
+  regions.forEach(function(r) {
+    var key = (r.name || '').toLowerCase().trim();
+    var code = COUNTRY_CODES_CTR[key];
+    if (code !== undefined) codeColorMap[code] = {color: r.color, name: r.name};
+  });
+  if (!Object.keys(codeColorMap).length) return;
+  fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+    .then(function(res) { return res.json(); })
+    .then(function(world) {
+      if (typeof topojson === 'undefined') return;
+      var countries = topojson.feature(world, world.objects.countries);
+      L.geoJSON(countries, {
+        style: function(feature) {
+          var match = codeColorMap[+feature.id];
+          if (match) {
+            var m = (match.color||'').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
+            var hex = match.color;
+            var alpha = 0.30;
+            if (m) {
+              hex = '#' + [+m[1],+m[2],+m[3]].map(function(v){return v.toString(16).padStart(2,'0');}).join('');
+              alpha = m[4] !== undefined ? +m[4] : 0.30;
+            }
+            return {color: hex, weight: 1.5, opacity: 0.8, fillColor: hex, fillOpacity: alpha};
+          }
+          return {fillOpacity: 0, opacity: 0, weight: 0};
+        },
+        onEachFeature: function(feature, layer) {
+          var match = codeColorMap[+feature.id];
+          if (match) layer.bindTooltip('<b>' + match.name + '</b>', {sticky: true});
+        }
+      }).addTo(map);
+    }).catch(function() {});
+})();
+
+// ── Arrow curve line helper ─────────────────────────────────────────────────
 function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
   laneOffset = laneOffset || 0;
   var WSIZ = 1024;
@@ -1542,6 +1705,13 @@ legendCtrl.onAdd = function() {
     h += '<div class="legend-item" data-key="' + route.key + '">'
       + '<div class="leg-swatch" style="background:' + route.color + '"></div>'
       + '<span>' + route.key + '</span></div>';
+  });
+  (ROUTE_DATA.highlight_regions || []).forEach(function(r) {
+    var m = (r.color||'').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+    var hex = r.color || '#ffa500';
+    if (m) hex = '#' + [+m[1],+m[2],+m[3]].map(function(v){return v.toString(16).padStart(2,'0');}).join('');
+    h += '<div class="legend-item"><div class="leg-zone" style="background:' + hex
+       + ';opacity:0.55;border:2px solid ' + hex + '"></div><span>' + r.name + '</span></div>';
   });
   h += '<div style="margin-top:8px;border-top:1px solid #ddd;padding-top:6px;">'
      + '<div class="legend-item" id="wz-toggle" title="Click to toggle war zone overlay" style="cursor:pointer;">'
@@ -2262,8 +2432,16 @@ def _plot_interactive(
         )
 
     elif plot_type == "pie":
+        # Align lengths, then cap at top 20 slices for readability
+        _n = min(len(labels), len(values))
+        _lbls, _vals = list(labels[:_n]), list(values[:_n])
+        PIE_MAX = 20
+        if _n > PIE_MAX:
+            _paired = sorted(zip(_vals, _lbls), reverse=True)
+            _vals  = [v for v, _ in _paired[:PIE_MAX - 1]] + [sum(v for v, _ in _paired[PIE_MAX - 1:])]
+            _lbls  = [l for _, l in _paired[:PIE_MAX - 1]] + ["Other"]
         fig = go.Figure(
-            data=[go.Pie(labels=labels, values=values, hole=0)]
+            data=[go.Pie(labels=_lbls, values=_vals, hole=0)]
         )
 
     elif plot_type == "heatmap":

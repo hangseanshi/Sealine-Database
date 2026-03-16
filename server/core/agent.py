@@ -165,6 +165,23 @@ TRACKING_ROUTES_TOOL = {
                 "type": "string",
                 "description": "Map title shown at the top.",
             },
+            "highlight_regions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "color": {"type": "string"},
+                    },
+                    "required": ["name"],
+                },
+                "description": (
+                    "Optional list of countries/regions to highlight on the map. "
+                    "Each entry: {\"name\": \"China\", \"color\": \"rgba(255,0,0,0.25)\"}. "
+                    "Country names are matched case-insensitively. "
+                    "Default color is rgba(255,165,0,0.30) if omitted."
+                ),
+            },
         },
     },
 }
@@ -221,6 +238,23 @@ CONTAINER_ROUTES_TOOL = {
             "title": {
                 "type": "string",
                 "description": "Map title shown at the top.",
+            },
+            "highlight_regions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "color": {"type": "string"},
+                    },
+                    "required": ["name"],
+                },
+                "description": (
+                    "Optional list of countries/regions to highlight on the map. "
+                    "Each entry: {\"name\": \"China\", \"color\": \"rgba(255,0,0,0.25)\"}. "
+                    "Country names are matched case-insensitively. "
+                    "Default color is rgba(255,165,0,0.30) if omitted."
+                ),
             },
         },
     },
@@ -651,7 +685,12 @@ class SealineAgent:
                 for i, trk in enumerate(trk_order)
             ]
 
-            map_data = {"locations": locations, "routes": routes}
+            highlight_regions = tool_input.get("highlight_regions") or []
+            # Apply default color for regions with no color specified
+            for _r in highlight_regions:
+                if not _r.get("color"):
+                    _r["color"] = "rgba(255,165,0,0.30)"
+            map_data = {"locations": locations, "routes": routes, "highlight_regions": highlight_regions}
             unique_tracks = len(routes)
             unique_stops  = len(locations)
 
@@ -851,7 +890,12 @@ class SealineAgent:
                     "vessels": cinfo["vessels"],
                 })
 
-            map_data = {"locations": locations, "routes": routes}
+            highlight_regions = tool_input.get("highlight_regions") or []
+            # Apply default color for regions with no color specified
+            for _r in highlight_regions:
+                if not _r.get("color"):
+                    _r["color"] = "rgba(255,165,0,0.30)"
+            map_data = {"locations": locations, "routes": routes, "highlight_regions": highlight_regions}
             unique_containers = len(routes)
             unique_stops      = len(locations)
 
