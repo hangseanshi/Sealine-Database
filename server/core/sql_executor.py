@@ -39,16 +39,18 @@ _ALLOWED_FIRST_WORDS = frozenset({"SELECT", "WITH"})
 # that column names like "is_deleted" or "delete_flag" are not falsely blocked.
 _DANGEROUS_KEYWORDS = frozenset({
     "DROP", "ALTER", "TRUNCATE",
-    "CREATE", "GRANT", "REVOKE", "EXEC", "EXECUTE",
+    "GRANT", "REVOKE", "EXEC", "EXECUTE",
     "XP_", "SP_CONFIGURE", "SHUTDOWN", "DBCC",
 })
 
-# Keywords that need word-boundary checks so they don't false-positive on column
-# names (e.g., "UpdatedDT", "is_deleted", "delete_flag", "InsertDate", "MergeKey").
+# Keywords that need word-boundary + space checks so they don't false-positive on
+# column names (e.g., "UpdatedDT", "is_deleted", "delete_flag", "InsertDate",
+# "MergeKey", "recreate_flag", "create_date").
 _INSERT_STMT_RE = re.compile(r"\bINSERT\s", re.IGNORECASE)
 _UPDATE_STMT_RE = re.compile(r"\bUPDATE\s", re.IGNORECASE)
 _DELETE_STMT_RE = re.compile(r"\bDELETE\s", re.IGNORECASE)
-_MERGE_STMT_RE = re.compile(r"\bMERGE\s", re.IGNORECASE)
+_MERGE_STMT_RE  = re.compile(r"\bMERGE\s",  re.IGNORECASE)
+_CREATE_STMT_RE = re.compile(r"\bCREATE\s", re.IGNORECASE)
 
 
 @dataclass
@@ -117,13 +119,15 @@ def execute_sql(query: str, connection_string: str | None = None) -> SqlResult:
                 error=True,
             )
 
-    # INSERT, UPDATE, DELETE, MERGE require word-boundary + space checks so
-    # column names like "InsertDate", "UpdatedDT", "is_deleted", "MergeKey" are allowed.
+    # INSERT, UPDATE, DELETE, MERGE, CREATE require word-boundary + space checks so
+    # column names like "InsertDate", "UpdatedDT", "is_deleted", "MergeKey",
+    # "recreate_flag", "create_date" are allowed.
     for _re, _kw in (
         (_INSERT_STMT_RE, "INSERT"),
         (_UPDATE_STMT_RE, "UPDATE"),
         (_DELETE_STMT_RE, "DELETE"),
-        (_MERGE_STMT_RE, "MERGE"),
+        (_MERGE_STMT_RE,  "MERGE"),
+        (_CREATE_STMT_RE, "CREATE"),
     ):
         if _re.search(q):
             return SqlResult(
