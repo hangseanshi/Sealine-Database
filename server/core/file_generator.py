@@ -974,6 +974,7 @@ window.onerror=function(m,s,l,c,e){
   .legend h4 { margin: 0 0 6px 0; font-size: 13px; color: #1F4788; }
   .legend-item { display: flex; align-items: center; gap: 7px; padding: 1px 4px; border-radius: 3px; cursor: pointer; }
   .legend-item:hover { background: #f0f4ff; }
+  .legend-item.active { background: #dce8ff; font-weight: 700; box-shadow: inset 0 0 0 1.5px #4a7fd4; }
   .leg-line { width: 22px; height: 3px; border-radius: 2px; flex-shrink: 0; }
   .leg-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.8); flex-shrink: 0; }
   .leg-zone { width: 22px; height: 11px; border-radius: 3px; flex-shrink: 0; }
@@ -1308,29 +1309,35 @@ legendCtrl.onAdd = function() {
      + '<div style="width:22px;height:11px;border:2px dashed #c0392b;background:rgba(231,76,60,0.18);flex-shrink:0;border-radius:2px;"></div>'
      + '<span style="color:#c0392b;font-weight:600;">&#9888; War Zones</span></div></div>';
   div.innerHTML = h;
-  div.querySelectorAll('.legend-item').forEach(function(item) {
-    var trk = item.getAttribute('data-trk');
-    item.addEventListener('mouseenter', function() {
-      // Dim all, then highlight hovered
-      ROUTE_DATA.routes.forEach(function(r) {
-        var rl = routeLayers[r.trk];
-        if (!rl) return;
-        var dimmed = (r.trk !== trk);
-        rl.lines.forEach(function(l) { l.setStyle({opacity: dimmed ? 0.12 : 1.0, weight: dimmed ? 2 : 5}); });
-        rl.markerIdxs.forEach(function(mi) {
-          if (locationMarkers[mi]) locationMarkers[mi].setStyle({fillOpacity: dimmed ? 0.12 : 1.0, opacity: dimmed ? 0.2 : 1.0});
-        });
+  var activeTrk = null;
+  function applyTrackingHighlight(selectedTrk) {
+    ROUTE_DATA.routes.forEach(function(r) {
+      var rl = routeLayers[r.trk];
+      if (!rl) return;
+      var dimmed = (selectedTrk !== null && r.trk !== selectedTrk);
+      rl.lines.forEach(function(l) { l.setStyle({opacity: dimmed ? 0.12 : 0.85, weight: dimmed ? 2 : (selectedTrk ? 5 : 3)}); });
+      rl.markerIdxs.forEach(function(mi) {
+        if (locationMarkers[mi]) locationMarkers[mi].setStyle({fillOpacity: dimmed ? 0.12 : 0.9, opacity: dimmed ? 0.2 : 1.0});
       });
     });
-    item.addEventListener('mouseleave', function() {
-      ROUTE_DATA.routes.forEach(function(r) {
-        var rl = routeLayers[r.trk];
-        if (!rl) return;
-        rl.lines.forEach(function(l) { l.setStyle({opacity: 0.85, weight: 3}); });
-        rl.markerIdxs.forEach(function(mi) {
-          if (locationMarkers[mi]) locationMarkers[mi].setStyle({fillOpacity: 0.9, opacity: 1.0});
-        });
-      });
+  }
+  div.querySelectorAll('.legend-item').forEach(function(item) {
+    var trk = item.getAttribute('data-trk');
+    if (!trk) return;
+    item.addEventListener('click', function(e) {
+      L.DomEvent.stopPropagation(e);
+      if (activeTrk === trk) {
+        // Clicking active item deselects it — restore all
+        activeTrk = null;
+        item.classList.remove('active');
+        applyTrackingHighlight(null);
+      } else {
+        // Deactivate previous
+        div.querySelectorAll('.legend-item.active').forEach(function(el) { el.classList.remove('active'); });
+        activeTrk = trk;
+        item.classList.add('active');
+        applyTrackingHighlight(trk);
+      }
     });
   });
   // War zone toggle
@@ -1877,6 +1884,7 @@ window.onerror=function(m,s,l,c,e){
   .legend h4 { margin: 0 0 6px 0; font-size: 13px; color: #1F4788; }
   .legend-item { display: flex; align-items: center; gap: 7px; padding: 1px 4px; border-radius: 3px; cursor: pointer; }
   .legend-item:hover { background: #f0f4ff; }
+  .legend-item.active { background: #dce8ff; font-weight: 700; box-shadow: inset 0 0 0 1.5px #4a7fd4; }
   .leg-swatch { width: 22px; height: 10px; border-radius: 3px; flex-shrink: 0; }
   .leg-zone { width: 22px; height: 11px; border-radius: 3px; flex-shrink: 0; }
   .route-tooltip { background: rgba(255,255,255,0.97); border: 1px solid #ccc; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
@@ -2163,32 +2171,44 @@ legendCtrl.onAdd = function() {
      + '<span style="color:#c0392b;font-weight:600;">&#9888; War Zones</span></div></div>';
   div.innerHTML = h;
 
-  // Hover: highlight hovered container, dim all others
-  div.querySelectorAll('[data-key]').forEach(function(item) {
-    var hoverKey = item.getAttribute('data-key');
-    item.addEventListener('mouseenter', function() {
-      ROUTE_DATA.routes.forEach(function(r) {
-        var rl = routeLayers[r.key];
-        if (!rl) return;
-        var dimmed = (r.key !== hoverKey);
-        rl.lines.forEach(function(l) {
-          l.setStyle({opacity: dimmed ? 0.10 : 1.0, weight: dimmed ? 1.0 : 3.0});
-        });
-      });
-      // Dim location dots not visited by hovered container
-      var hoverStops = routeLayers[hoverKey] ? routeLayers[hoverKey].stopSet : {};
-      locationMarkers.forEach(function(m, mi) {
-        var visited = !!hoverStops[mi];
-        m.setStyle({fillOpacity: visited ? 1.0 : 0.10, opacity: visited ? 1.0 : 0.15});
+  // Click: highlight selected container, dim all others (click again to deselect)
+  var activeKey = null;
+  function applyContainerHighlight(selectedKey) {
+    ROUTE_DATA.routes.forEach(function(r) {
+      var rl = routeLayers[r.key];
+      if (!rl) return;
+      var dimmed = (selectedKey !== null && r.key !== selectedKey);
+      rl.lines.forEach(function(l) {
+        l.setStyle({opacity: dimmed ? 0.10 : 0.85, weight: dimmed ? 1.0 : (selectedKey ? 3.0 : 1.8)});
       });
     });
-    item.addEventListener('mouseleave', function() {
-      ROUTE_DATA.routes.forEach(function(r) {
-        var rl = routeLayers[r.key];
-        if (!rl) return;
-        rl.lines.forEach(function(l) { l.setStyle({opacity: 0.85, weight: 1.8}); });
+    // Dim/restore location dots based on selected container's stops
+    if (selectedKey !== null) {
+      var selStops = routeLayers[selectedKey] ? routeLayers[selectedKey].stopSet : {};
+      locationMarkers.forEach(function(m, mi) {
+        var visited = !!selStops[mi];
+        m.setStyle({fillOpacity: visited ? 1.0 : 0.10, opacity: visited ? 1.0 : 0.15});
       });
+    } else {
       locationMarkers.forEach(function(m) { m.setStyle({fillOpacity: 0.9, opacity: 1.0}); });
+    }
+  }
+  div.querySelectorAll('[data-key]').forEach(function(item) {
+    var key = item.getAttribute('data-key');
+    item.addEventListener('click', function(e) {
+      L.DomEvent.stopPropagation(e);
+      if (activeKey === key) {
+        // Clicking active item deselects it — restore all
+        activeKey = null;
+        item.classList.remove('active');
+        applyContainerHighlight(null);
+      } else {
+        // Deactivate previous
+        div.querySelectorAll('[data-key].active').forEach(function(el) { el.classList.remove('active'); });
+        activeKey = key;
+        item.classList.add('active');
+        applyContainerHighlight(key);
+      }
     });
   });
 
