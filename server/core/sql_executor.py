@@ -135,6 +135,19 @@ def execute_sql(query: str, connection_string: str | None = None) -> SqlResult:
                 error=True,
             )
 
+    # Forbidden tables — must never be queried directly.
+    # Use the designated views instead.
+    _FORBIDDEN_TABLES = {
+        "SEALINE_CONTAINER_EVENT": "Use view v_sealine_container_route instead of Sealine_Container_Event.",
+    }
+    import re as _re_mod
+    for _tbl, _hint in _FORBIDDEN_TABLES.items():
+        if _re_mod.search(r'\b' + _tbl + r'\b', q_upper):
+            return SqlResult(
+                text=f"ERROR: Direct access to {_tbl} is not permitted. {_hint}",
+                error=True,
+            )
+
     conn_str = connection_string or _build_connection_string()
 
     conn = None
@@ -196,7 +209,7 @@ def execute_sql(query: str, connection_string: str | None = None) -> SqlResult:
     except Exception as e:
         logger.exception("SQL execution error")
         return SqlResult(
-            text="SQL ERROR: Query execution failed. Check query syntax and try again.",
+            text=f"SQL ERROR: {e}",
             error=True,
         )
     finally:

@@ -1153,8 +1153,10 @@ var COUNTRY_CODES_TRK = {
 })();
 
 // ── Arrow line helper (returns polyline for highlight control) ──────────────
-function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
+// dotted=true renders a dashed line (used when the destination has estimated events)
+function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
   laneOffset = laneOffset || 0;
+  var dash = dotted ? '6,6' : null;
   var WSIZ = 1024;
   function merc(lat, lon) {
     var s = Math.sin(lat * Math.PI / 180);
@@ -1168,16 +1170,21 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
   var dx = p2.x - p1.x, dy = p2.y - p1.y;
   var pixChord = Math.sqrt(dx*dx + dy*dy) || 1;
   var STRAIGHT_THRESHOLD = 10;
+  var arrows = [];
   if (pixChord < STRAIGHT_THRESHOLD) {
-    var _sl = L.polyline([fromPt, toPt], {color: color, weight: 3, opacity: 0.85}).addTo(map);
+    var _slOpts = {color: color, weight: 3, opacity: 0.85};
+    if (dash) _slOpts.dashArray = dash;
+    var _sl = L.polyline([fromPt, toPt], _slOpts).addTo(map);
     if (tooltipHtml) _sl.bindTooltip(tooltipHtml, {sticky: true, className: 'route-tooltip'});
-    var mLat = (fromPt[0]+toPt[0])/2, mLon = (fromPt[1]+toPt[1])/2;
     var mAngle = Math.atan2(toPt[1]-fromPt[1], toPt[0]-fromPt[0]) * 180/Math.PI;
-    var mSvg = '<svg width="18" height="18" viewBox="-9 -9 18 18" xmlns="http://www.w3.org/2000/svg">'
-      + '<polygon points="0,-7 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
-      + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
-    L.marker([mLat, mLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[18,18], iconAnchor:[9,9]}), interactive:false, zIndexOffset:100}).addTo(map);
-    return _sl;
+    [0.25, 0.50, 0.75].forEach(function(f) {
+      var aLat = fromPt[0] + f*(toPt[0]-fromPt[0]), aLon = fromPt[1] + f*(toPt[1]-fromPt[1]);
+      var mSvg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+        + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
+        + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
+      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
+    });
+    return {line: _sl, arrows: arrows};
   }
   var perpX = -dy/pixChord, perpY = dx/pixChord;
   // Adaptive curve depth: flatter for nearby stops, gentler arc for distant ones
@@ -1190,16 +1197,20 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
     var t = i/N, u = 1-t;
     curvePts.push([u*u*fromPt[0]+2*u*t*ctrlLat+t*t*toPt[0], u*u*fromPt[1]+2*u*t*ctrlLon+t*t*toPt[1]]);
   }
-  var _cl = L.polyline(curvePts, {color: color, weight: 3, opacity: 0.85}).addTo(map);
+  var _clOpts = {color: color, weight: 3, opacity: 0.85};
+  if (dash) _clOpts.dashArray = dash;
+  var _cl = L.polyline(curvePts, _clOpts).addTo(map);
   if (tooltipHtml) _cl.bindTooltip(tooltipHtml, {sticky: true, className: 'route-tooltip'});
   function bzPt(t) { var u=1-t; return [u*u*fromPt[0]+2*u*t*ctrlLat+t*t*toPt[0], u*u*fromPt[1]+2*u*t*ctrlLon+t*t*toPt[1]]; }
-  var arrPt = bzPt(0.75), pa = bzPt(0.73), pb = bzPt(0.77);
-  var angle = Math.atan2(pb[1]-pa[1], pb[0]-pa[0]) * 180/Math.PI;
-  var svg = '<svg width="18" height="18" viewBox="-9 -9 18 18" xmlns="http://www.w3.org/2000/svg">'
-    + '<polygon points="0,-7 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
-    + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
-  L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[18,18], iconAnchor:[9,9]}), interactive:false, zIndexOffset:100}).addTo(map);
-  return _cl;
+  [0.25, 0.50, 0.75].forEach(function(tf) {
+    var arrPt = bzPt(tf), pa = bzPt(tf-0.02), pb = bzPt(tf+0.02);
+    var angle = Math.atan2(pb[1]-pa[1], pb[0]-pa[0]) * 180/Math.PI;
+    var svg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+      + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
+      + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
+    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
+  });
+  return {line: _cl, arrows: arrows};
 }
 
 // \u2500\u2500 Build popup HTML for a location \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -1251,10 +1262,22 @@ function buildLineTooltip(route, fromLoc, toLoc) {
 }
 
 // \u2500\u2500 Draw route lines \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Returns true if any event at loc for the given tracking number contains "(E)"
+// (E) = Estimated — the leg ending here is not yet confirmed, so draw it dotted.
+function hasEstimatedEvent(loc, trkName) {
+  for (var i = 0; i < loc.tracks.length; i++) {
+    if (loc.tracks[i].trk === trkName) {
+      for (var j = 0; j < loc.tracks[i].events.length; j++) {
+        if (loc.tracks[i].events[j].indexOf('(E)') !== -1) return true;
+      }
+    }
+  }
+  return false;
+}
 var routeLayers = {};   // trk -> { lines: [polyline, ...], markerIdxs: [locIdx, ...] }
 var lineGroups  = {};   // "fi-ti" -> offset count (for lane separation)
 ROUTE_DATA.routes.forEach(function(route) {
-  routeLayers[route.trk] = {lines: [], markerIdxs: []};
+  routeLayers[route.trk] = {lines: [], arrows: [], markerIdxs: []};
   for (var i = 0; i < route.stops.length - 1; i++) {
     var fi = route.stops[i], ti = route.stops[i+1];
     var key = Math.min(fi,ti) + '-' + Math.max(fi,ti);
@@ -1262,8 +1285,11 @@ ROUTE_DATA.routes.forEach(function(route) {
     lineGroups[key] = (lineGroups[key] || 0) + 1;
     var fromLoc = ROUTE_DATA.locations[fi], toLoc = ROUTE_DATA.locations[ti];
     var tip = buildLineTooltip(route, fromLoc, toLoc);
-    var line = drawArrowLine([fromLoc.lat, fromLoc.lon], [toLoc.lat, toLoc.lon], route.color, offset, tip);
-    if (line) routeLayers[route.trk].lines.push(line);
+    // Dotted line when the destination location has an estimated event (E)
+    var dotted = hasEstimatedEvent(toLoc, route.trk);
+    var _r = drawArrowLine([fromLoc.lat, fromLoc.lon], [toLoc.lat, toLoc.lon], route.color, offset, tip, dotted);
+    if (_r && _r.line) routeLayers[route.trk].lines.push(_r.line);
+    if (_r && _r.arrows) _r.arrows.forEach(function(a) { routeLayers[route.trk].arrows.push(a); });
   }
   route.stops.forEach(function(idx) { routeLayers[route.trk].markerIdxs.push(idx); });
 });
@@ -1316,6 +1342,7 @@ legendCtrl.onAdd = function() {
       if (!rl) return;
       var dimmed = (selectedTrk !== null && r.trk !== selectedTrk);
       rl.lines.forEach(function(l) { l.setStyle({opacity: dimmed ? 0.12 : 0.85, weight: dimmed ? 2 : (selectedTrk ? 5 : 3)}); });
+      if (rl.arrows) rl.arrows.forEach(function(a) { a.setOpacity(dimmed ? 0.1 : 1.0); });
       rl.markerIdxs.forEach(function(mi) {
         if (locationMarkers[mi]) locationMarkers[mi].setStyle({fillOpacity: dimmed ? 0.12 : 0.9, opacity: dimmed ? 0.2 : 1.0});
       });
@@ -2009,8 +2036,10 @@ var COUNTRY_CODES_CTR = {
 })();
 
 // ── Arrow curve line helper ─────────────────────────────────────────────────
-function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
+// dotted=true renders a dashed line (used when the destination has estimated events)
+function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
   laneOffset = laneOffset || 0;
+  var dash = dotted ? '6,6' : null;
   var WSIZ = 1024;
   function merc(lat, lon) {
     var s = Math.sin(lat * Math.PI / 180);
@@ -2024,16 +2053,21 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
   var dx = p2.x - p1.x, dy = p2.y - p1.y;
   var pixChord = Math.sqrt(dx*dx + dy*dy) || 1;
   var STRAIGHT_THRESHOLD = 10;
+  var arrows = [];
   if (pixChord < STRAIGHT_THRESHOLD) {
-    var _sl = L.polyline([fromPt, toPt], {color: color, weight: 1.8, opacity: 0.85}).addTo(map);
+    var _slOpts = {color: color, weight: 1.8, opacity: 0.85};
+    if (dash) _slOpts.dashArray = dash;
+    var _sl = L.polyline([fromPt, toPt], _slOpts).addTo(map);
     if (tooltipHtml) _sl.bindTooltip(tooltipHtml, {sticky: true, className: 'route-tooltip'});
-    var mLat = (fromPt[0]+toPt[0])/2, mLon = (fromPt[1]+toPt[1])/2;
     var mAngle = Math.atan2(toPt[1]-fromPt[1], toPt[0]-fromPt[0]) * 180/Math.PI;
-    var mSvg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
-      + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
-      + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
-    L.marker([mLat, mLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map);
-    return _sl;
+    [0.25, 0.50, 0.75].forEach(function(f) {
+      var aLat = fromPt[0] + f*(toPt[0]-fromPt[0]), aLon = fromPt[1] + f*(toPt[1]-fromPt[1]);
+      var mSvg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+        + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
+        + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
+      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
+    });
+    return {line: _sl, arrows: arrows};
   }
   var perpX = -dy/pixChord, perpY = dx/pixChord;
   // Adaptive curve depth: flatter for nearby stops, gentler arc for distant ones
@@ -2046,16 +2080,20 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml) {
     var t = i/N, u = 1-t;
     curvePts.push([u*u*fromPt[0]+2*u*t*ctrlLat+t*t*toPt[0], u*u*fromPt[1]+2*u*t*ctrlLon+t*t*toPt[1]]);
   }
-  var _cl = L.polyline(curvePts, {color: color, weight: 1.8, opacity: 0.85}).addTo(map);
+  var _clOpts = {color: color, weight: 1.8, opacity: 0.85};
+  if (dash) _clOpts.dashArray = dash;
+  var _cl = L.polyline(curvePts, _clOpts).addTo(map);
   if (tooltipHtml) _cl.bindTooltip(tooltipHtml, {sticky: true, className: 'route-tooltip'});
   function bzPt(t) { var u=1-t; return [u*u*fromPt[0]+2*u*t*ctrlLat+t*t*toPt[0], u*u*fromPt[1]+2*u*t*ctrlLon+t*t*toPt[1]]; }
-  var arrPt = bzPt(0.75), pa = bzPt(0.73), pb = bzPt(0.77);
-  var angle = Math.atan2(pb[1]-pa[1], pb[0]-pa[0]) * 180/Math.PI;
-  var svg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
-    + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
-    + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
-  L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map);
-  return _cl;
+  [0.25, 0.50, 0.75].forEach(function(tf) {
+    var arrPt = bzPt(tf), pa = bzPt(tf-0.02), pb = bzPt(tf+0.02);
+    var angle = Math.atan2(pb[1]-pa[1], pb[0]-pa[0]) * 180/Math.PI;
+    var svg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+      + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
+      + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
+    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
+  });
+  return {line: _cl, arrows: arrows};
 }
 
 // \u2500\u2500 Popup: LocationName header + sorted containers + events \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -2111,10 +2149,21 @@ function buildContainerLineTooltip(route, fromLoc, toLoc, vessel) {
 }
 
 // \u2500\u2500 Draw route lines (one per container, never crossing containers) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Returns true if any event at loc for the given container key contains "(E)"
+function hasEstimatedContainerEvent(loc, ckey) {
+  for (var i = 0; i < loc.containers.length; i++) {
+    if (loc.containers[i].key === ckey) {
+      for (var j = 0; j < loc.containers[i].events.length; j++) {
+        if (loc.containers[i].events[j].indexOf('(E)') !== -1) return true;
+      }
+    }
+  }
+  return false;
+}
 var routeLayers = {};   // key -> { lines: [polyline,...], stopSet: Set of loc indices }
 var lineGroups  = {};   // "fi-ti" -> count (lane separation counter)
 ROUTE_DATA.routes.forEach(function(route) {
-  routeLayers[route.key] = { lines: [], stopSet: {} };
+  routeLayers[route.key] = { lines: [], arrows: [], stopSet: {} };
   for (var i = 0; i < route.stops.length - 1; i++) {
     var fi = route.stops[i], ti = route.stops[i + 1];
     var pairKey = Math.min(fi, ti) + '-' + Math.max(fi, ti);
@@ -2124,8 +2173,10 @@ ROUTE_DATA.routes.forEach(function(route) {
     var toLoc   = ROUTE_DATA.locations[ti];
     var vessel  = (route.vessels && i < route.vessels.length) ? route.vessels[i] : '';
     var tip     = buildContainerLineTooltip(route, fromLoc, toLoc, vessel);
-    var line    = drawArrowLine([fromLoc.lat, fromLoc.lon], [toLoc.lat, toLoc.lon], route.color, offset, tip);
-    if (line) routeLayers[route.key].lines.push(line);
+    var dotted  = hasEstimatedContainerEvent(toLoc, route.key);
+    var _r    = drawArrowLine([fromLoc.lat, fromLoc.lon], [toLoc.lat, toLoc.lon], route.color, offset, tip, dotted);
+    if (_r && _r.line) routeLayers[route.key].lines.push(_r.line);
+    if (_r && _r.arrows) _r.arrows.forEach(function(a) { routeLayers[route.key].arrows.push(a); });
   }
   route.stops.forEach(function(si) { routeLayers[route.key].stopSet[si] = true; });
 });
@@ -2181,6 +2232,7 @@ legendCtrl.onAdd = function() {
       rl.lines.forEach(function(l) {
         l.setStyle({opacity: dimmed ? 0.10 : 0.85, weight: dimmed ? 1.0 : (selectedKey ? 3.0 : 1.8)});
       });
+      if (rl.arrows) rl.arrows.forEach(function(a) { a.setOpacity(dimmed ? 0.1 : 1.0); });
     });
     // Dim/restore location dots based on selected container's stops
     if (selectedKey !== null) {

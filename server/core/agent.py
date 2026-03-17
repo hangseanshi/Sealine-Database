@@ -1,16 +1,13 @@
 """
-Agent Core — Azure OpenAI-powered agentic loop for Sealine Data Chat.
+Agent Core — Anthropic Claude-powered agentic loop for Sealine Data Chat.
 
-Replaces the Anthropic Claude agent with Azure OpenAI (GPT-4o).
 The SSE event interface is identical — the frontend is unchanged.
 
-Key differences from the Anthropic version:
-  - Client: AzureOpenAI instead of anthropic.Anthropic
-  - Tool definitions wrapped in {"type": "function", "function": {...}}
-  - Tool results sent as role:"tool" messages, not role:"user" content blocks
-  - Streaming uses chunk.choices[0].delta; tool call args accumulated across chunks
-  - No prompt caching (cache_control removed)
-  - No thinking blocks
+Key implementation details:
+  - Client: anthropic.Anthropic
+  - Tool definitions in Anthropic input_schema format (no conversion needed)
+  - Tool results sent as role:"user" content blocks with type:"tool_result"
+  - Streaming uses client.messages.stream() with text_stream + get_final_message()
 """
 
 from __future__ import annotations
@@ -20,8 +17,10 @@ import logging
 import uuid
 from typing import Generator
 
+import ssl
+
+import anthropic
 import httpx
-from openai import AzureOpenAI, AuthenticationError, RateLimitError, APIConnectionError, APIStatusError
 
 from server.config import get_config
 from server.core.sql_executor import execute_sql, MAX_ROWS
@@ -396,17 +395,6 @@ def _get_excel_tool_def() -> dict:
     return GENERATE_EXCEL_TOOL if _FILE_TOOLS_AVAILABLE else _FALLBACK_EXCEL_TOOL
 
 
-def _to_openai_tool(tool_def: dict) -> dict:
-    """Convert Anthropic-style tool definition to OpenAI function format."""
-    return {
-        "type": "function",
-        "function": {
-            "name": tool_def["name"],
-            "description": tool_def.get("description", ""),
-            "parameters": tool_def.get("input_schema", {"type": "object", "properties": {}}),
-        },
-    }
-
 
 # ---------------------------------------------------------------------------
 #  SSE helper
@@ -422,15 +410,12 @@ def _sse(event: str, data: dict) -> dict:
 
 class SealineAgent:
     """
-    Azure OpenAI-powered agent that yields SSE event dicts.
-
-    Constructor args match the Anthropic version exactly so messages.py
-    requires no changes.
+    Anthropic Claude-powered agent that yields SSE event dicts.
     """
 
     def __init__(
         self,
-        model: str = "gpt-4o-03252025",
+        model: str = "claude-haiku-4-5",
         system_prompt: str = (
             "You are a helpful AI assistant and data analyst "
             "for the Sealine shipping database."
@@ -444,11 +429,16 @@ class SealineAgent:
         messages: list[dict] | None = None,
     ):
         cfg = get_config()
-        self.client = AzureOpenAI(
-            azure_endpoint=cfg.AZURE_OPENAI_ENDPOINT,
-            api_version=cfg.AZURE_OPENAI_API_VERSION,
-            api_key=cfg.AZURE_OPENAI_API_KEY,
-            http_client=httpx.Client(verify=False),
+        # Use a custom httpx client that disables SSL certificate revocation
+        # checks — required on Windows servers where CRL/OCSP endpoints may
+        # be unreachable (results in CRYPT_E_NO_REVOCATION_CHECK errors).
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        http_client = httpx.Client(verify=False)
+        self.client = anthropic.Anthropic(
+            api_key=cfg.ANTHROPIC_API_KEY,
+            http_client=http_client,
         )
         self.model = model
         self.system_prompt = system_prompt
@@ -505,15 +495,15 @@ class SealineAgent:
     def _tools(self) -> list[dict]:
         tools: list[dict] = []
         if self.db_enabled:
-            tools.append(_to_openai_tool(SQL_TOOL))
-        tools.append(_to_openai_tool(_get_plot_tool_def()))
-        tools.append(_to_openai_tool(_get_pdf_tool_def()))
-        tools.append(_to_openai_tool(_get_excel_tool_def()))
-        tools.append(_to_openai_tool(TRACKING_ROUTES_TOOL))
-        tools.append(_to_openai_tool(CONTAINER_ROUTES_TOOL))
-        tools.append(_to_openai_tool(GEOCODE_LOCATION_TOOL))
-        tools.append(_to_openai_tool(LOCATION_BUBBLE_MAP_TOOL))
-        tools.append(_to_openai_tool(CHOROPLETH_MAP_TOOL))
+            tools.append(SQL_TOOL)
+        tools.append(_get_plot_tool_def())
+        tools.append(_get_pdf_tool_def())
+        tools.append(_get_excel_tool_def())
+        tools.append(TRACKING_ROUTES_TOOL)
+        tools.append(CONTAINER_ROUTES_TOOL)
+        tools.append(GEOCODE_LOCATION_TOOL)
+        tools.append(LOCATION_BUBBLE_MAP_TOOL)
+        tools.append(CHOROPLETH_MAP_TOOL)
         return tools
 
     # ------------------------------------------------------------------
@@ -1223,7 +1213,7 @@ class SealineAgent:
         message_id = f"msg_{uuid.uuid4().hex[:12]}"
         self.generated_files = []
 
-        # Append user turn (OpenAI format)
+        # Append user turn
         self.messages.append({"role": "user", "content": user_text})
 
         yield _sse("message_start", {"message_id": message_id, "session_id": self.session_id})
@@ -1246,80 +1236,49 @@ class SealineAgent:
                 break
 
             try:
-                # Accumulate streaming response
-                text_chunks: list[str] = []
-                tool_calls_acc: dict[int, dict] = {}  # index -> {id, name, arguments}
-                finish_reason: str | None = None
-
-                stream = self.client.chat.completions.create(
+                with self.client.messages.stream(
                     model=self.model,
                     max_tokens=self.max_tokens,
-                    messages=[{"role": "system", "content": sys_content}] + self.messages,
+                    system=sys_content,
+                    messages=self.messages,
                     tools=tools,
-                    stream=True,
-                    stream_options={"include_usage": True},
-                )
+                ) as stream:
+                    # Stream text tokens to the frontend as they arrive
+                    for text in stream.text_stream:
+                        yield _sse("text_delta", {"delta": text})
 
-                for chunk in stream:
-                    # Usage chunk (final chunk with no choices)
-                    if not chunk.choices:
-                        if hasattr(chunk, "usage") and chunk.usage:
-                            msg_input_tokens += chunk.usage.prompt_tokens or 0
-                            msg_output_tokens += chunk.usage.completion_tokens or 0
-                            self.total_input_tokens += chunk.usage.prompt_tokens or 0
-                            self.total_output_tokens += chunk.usage.completion_tokens or 0
-                        continue
+                    # Get the complete final message (already assembled by the SDK)
+                    final_message = stream.get_final_message()
 
-                    choice = chunk.choices[0]
-                    if choice.finish_reason:
-                        finish_reason = choice.finish_reason
-                    delta = choice.delta
+                # Accumulate token usage
+                msg_input_tokens += final_message.usage.input_tokens
+                msg_output_tokens += final_message.usage.output_tokens
+                self.total_input_tokens += final_message.usage.input_tokens
+                self.total_output_tokens += final_message.usage.output_tokens
 
-                    # Text content
-                    if delta.content:
-                        text_chunks.append(delta.content)
-                        yield _sse("text_delta", {"delta": delta.content})
+                stop_reason = final_message.stop_reason
 
-                    # Tool call accumulation
-                    if delta.tool_calls:
-                        for tc in delta.tool_calls:
-                            idx = tc.index
-                            if idx not in tool_calls_acc:
-                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                            if tc.id:
-                                tool_calls_acc[idx]["id"] = tc.id
-                            if tc.function and tc.function.name:
-                                tool_calls_acc[idx]["name"] += tc.function.name
-                            if tc.function and tc.function.arguments:
-                                tool_calls_acc[idx]["arguments"] += tc.function.arguments
-
-                # Build assistant message for history
-                assistant_content = "".join(text_chunks) or None
-                assistant_msg: dict = {"role": "assistant", "content": assistant_content}
-                if tool_calls_acc:
-                    assistant_msg["tool_calls"] = [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                        }
-                        for tc in sorted(tool_calls_acc.values(), key=lambda x: list(tool_calls_acc.keys()).index(
-                            next(k for k, v in tool_calls_acc.items() if v is x)
-                        ))
-                    ]
-                self.messages.append(assistant_msg)
+                # Build assistant history entry from the response content blocks
+                assistant_content = []
+                for block in final_message.content:
+                    if block.type == "text":
+                        assistant_content.append({"type": "text", "text": block.text})
+                    elif block.type == "tool_use":
+                        assistant_content.append({
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        })
+                self.messages.append({"role": "assistant", "content": assistant_content})
 
                 # ---- Tool use ----
-                if finish_reason == "tool_calls" and tool_calls_acc:
-                    tool_result_msgs: list[dict] = []
+                if stop_reason == "tool_use":
+                    tool_use_blocks = [b for b in final_message.content if b.type == "tool_use"]
+                    tool_results: list[dict] = []
 
-                    for tc in tool_calls_acc.values():
-                        try:
-                            tool_input = json.loads(tc["arguments"])
-                        except json.JSONDecodeError:
-                            tool_input = {}
-
-                        gen = self._execute_tool(tc["name"], tool_input)
+                    for tb in tool_use_blocks:
+                        gen = self._execute_tool(tb.name, tb.input)
                         result_text = ""
                         try:
                             while True:
@@ -1327,47 +1286,47 @@ class SealineAgent:
                         except StopIteration as stop:
                             result_text = stop.value or ""
 
-                        tool_result_msgs.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tb.id,
                             "content": result_text,
                         })
 
-                    self.messages.extend(tool_result_msgs)
+                    self.messages.append({"role": "user", "content": tool_results})
                     continue
 
-                # ---- end_turn ----
+                # ---- end_turn or other terminal stop reason ----
                 break
 
-            except AuthenticationError as exc:
-                logger.error("Azure OpenAI authentication error: %s", exc)
+            except anthropic.AuthenticationError as exc:
+                logger.error("Anthropic authentication error: %s", exc)
                 yield _sse("error", {
-                    "error": "Azure OpenAI authentication failed. Check server configuration.",
+                    "error": "Anthropic API authentication failed. Check ANTHROPIC_API_KEY.",
                     "code": "AUTH_ERROR",
                     "recoverable": False,
                 })
                 break
-            except RateLimitError as exc:
-                logger.warning("Azure OpenAI rate limit: %s", exc)
+            except anthropic.RateLimitError as exc:
+                logger.warning("Anthropic rate limit: %s", exc)
                 yield _sse("error", {
                     "error": "Rate limit reached. Please wait a moment and try again.",
                     "code": "RATE_LIMITED",
                     "recoverable": True,
                 })
                 break
-            except APIConnectionError as exc:
-                logger.error("Azure OpenAI connection error: %s", exc)
+            except anthropic.APIConnectionError as exc:
+                logger.error("Anthropic connection error: %s", exc)
                 yield _sse("error", {
                     "error": "Could not connect to the AI service. Please try again shortly.",
                     "code": "CONNECTION_ERROR",
                     "recoverable": True,
                 })
                 break
-            except APIStatusError as exc:
-                logger.error("Azure OpenAI status error %s: %s", exc.status_code, exc.message)
+            except anthropic.APIStatusError as exc:
+                logger.error("Anthropic API status error %s: %s", exc.status_code, exc.message)
                 yield _sse("error", {
                     "error": "The AI service returned an error. Please try again.",
-                    "code": "OPENAI_API_ERROR",
+                    "code": "ANTHROPIC_API_ERROR",
                     "recoverable": False,
                 })
                 break

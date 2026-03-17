@@ -291,6 +291,104 @@ External carrier code reference.
 
 ---
 
+## Views
+
+### v_sealine_tracking_route
+Tracking-level locations and events. One row per unique location per TrackNumber, with all events for that location pre-aggregated into `EventLines`.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| TrackNumber | varchar | FK → Sealine_Header |
+| Lat | varchar | Latitude (use TRY_CAST AS FLOAT) |
+| Lng | varchar | Longitude (use TRY_CAST AS FLOAT) |
+| LocationName | varchar | Display name of the location |
+| RouteType | varchar | Stop role: `PRE-POL`, `POL`, `POD`, `POST-POD` |
+| MinOrderId | int | Lowest order sequence at this location — use ORDER BY MinOrderId ASC for chronological route |
+| NoOfContainers | int | Number of containers at this stop |
+| EventLines | varchar | All events at this location, delimited by `<BR>` |
+
+**EventLines format** — each event is a 3-part string:
+```
+<RouteType>:<date> (A/E)
+```
+- `<RouteType>` — `PRE-POL`, `POL`, `POD`, or `POST-POD`
+- `<date>` — the date when the tracking was assigned that route type (e.g. `2026-02-15`)
+- `(A)` — **Actual**: date is confirmed, event has happened
+- `(E)` — **Estimated**: date is not yet confirmed, event has not happened yet
+
+**Example EventLines value:**
+```
+POL:2026-02-15 (A)<BR>POD:2026-03-10 (E)
+```
+
+---
+
+### Defining "Departed" (left origin)
+
+> ⭐ **ALWAYS use `v_sealine_tracking_route` for any question about departure, arrival, left origin, or reached destination. NEVER use `Sealine_Route` or `IsActual` for these questions.**
+
+A tracking is considered **departed** when its POL row has no `(E)` entries remaining in EventLines.
+
+**Rules:**
+- `RouteType LIKE '%POL%' AND RouteType <> 'PRE-POL'` — matches `POL` but explicitly excludes `PRE-POL` (inland feeder stop before the main port)
+- `EventLines NOT LIKE '%(E)%'` — no estimated events remain, meaning departure is confirmed
+
+**Query pattern:**
+```sql
+-- All departed trackings
+SELECT *
+FROM v_sealine_tracking_route
+WHERE RouteType LIKE '%POL%'
+  AND RouteType <> 'PRE-POL'
+  AND EventLines NOT LIKE '%(E)%'
+```
+
+> ⚠️ Always use `RouteType <> 'PRE-POL'` — never treat a PRE-POL stop as a departure.
+
+---
+
+### Defining "Arrived" (reached destination)
+
+A tracking is considered **arrived** when its POD row has no `(E)` entries remaining in EventLines.
+
+**Rules:**
+- `RouteType LIKE '%POD%'` — matches POD stops
+- `EventLines NOT LIKE '%(E)%'` — no estimated events remain, meaning arrival is confirmed
+
+**Query pattern:**
+```sql
+-- All arrived trackings
+SELECT *
+FROM v_sealine_tracking_route
+WHERE RouteType LIKE '%POD%'
+  AND EventLines NOT LIKE '%(E)%'
+```
+
+---
+
+### v_sealine_container_route
+Container-level locations and events. One row per unique location per container, with all events for that location pre-aggregated into `EventLines`.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| TrackNumber | varchar | FK → Sealine_Header |
+| Container_NUMBER | varchar | Container number |
+| Lat | varchar | Latitude (use TRY_CAST AS FLOAT) |
+| Lng | varchar | Longitude (use TRY_CAST AS FLOAT) |
+| LocationName | varchar | Display name of the location |
+| MinOrderId | int | Lowest order sequence — use ORDER BY MinOrderId ASC for chronological route |
+| EventLines | varchar | All events at this location (CHAR(10) newline-separated) |
+| Vessel | varchar | Vessel name at this stop |
+| isTransitLocation | varchar | `'Y'` = transit/transshipment stop; `'N'` or NULL = origin or destination |
+
+**Column constraints:**
+- `Country_Code`, `LOCode`, `Location`, `Facility`, `Order_Id` do **NOT** exist in this view
+- Use `LocationName` directly — do not join to `Sealine_Locations` for the name
+- `isTransitLocation = 'Y'` (string, not `1` or `true`)
+- EventLines here uses `(A)` to indicate actual events: `EventLines LIKE '%(A)%'`
+
+---
+
 ## Common Query Patterns
 
 ### Safe lat/lng cast
