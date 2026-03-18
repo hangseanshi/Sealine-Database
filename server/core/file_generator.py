@@ -2205,9 +2205,16 @@ legendCtrl.onAdd = function() {
   var div = L.DomUtil.create('div', 'legend');
   var h = '<h4>Legend</h4>';
   ROUTE_DATA.routes.forEach(function(route) {
+    // Fix duplicated TrackNumber prefix in container identifiers
+    var displayKey = route.key;
+    var parts = displayKey.split('-');
+    if (parts.length >= 3 && parts[0] === parts[1]) {
+      // Remove the duplicate prefix (e.g., "00010987-00010987-CXDU1050162" -> "00010987-CXDU1050162")
+      displayKey = parts.slice(1).join('-');
+    }
     h += '<div class="legend-item" data-key="' + route.key + '">'
       + '<div class="leg-swatch" style="background:' + route.color + '"></div>'
-      + '<span>' + route.key + '</span></div>';
+      + '<span>' + displayKey + '</span></div>';
   });
   (ROUTE_DATA.highlight_regions || []).forEach(function(r) {
     var m = (r.color||'').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
