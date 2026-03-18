@@ -520,6 +520,19 @@ class SealineAgent:
             # CRITICAL: Validate query does not contain invalid SQL patterns
             query_upper = query.upper()
 
+            # DEBUG: Write marker file to prove this code is running
+            try:
+                with open("/tmp/execute_sql_called.txt", "w") as f:
+                    f.write(f"execute_sql called\nhas POD: {'POD' in query_upper}\nhas STATUS: {'STATUS' in query_upper}\nhas <>: {'<>' in query_upper}\n")
+            except:
+                pass
+
+            # SIMPLE TEST: Reject any query with POD and Status filtering
+            if "POD" in query_upper and "STATUS" in query_upper and "<>" in query_upper:
+                error_msg = "🧪 TEST VALIDATION TRIGGERED: This query has POD + Status filtering which is suspicious."
+                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
+                return error_msg
+
             # Check for invalid table alias references
             import re as regex_module
             from_match = regex_module.search(r'FROM\s+(\w+)\s+(\w+)', query_upper)
@@ -622,6 +635,9 @@ class SealineAgent:
                                    ("STATUS" in query_upper and "NOT IN" in query_upper))
             has_pod_keyword = "POD" in query_upper
             has_war_zone_keyword = any(term in query_upper for term in ["WAR", "ZONE", "RED SEA", "PERSIAN", "ADEN", "MEDITERRANEAN"])
+
+            # Debug logging
+            logger.info(f"Status validation: has_status_filtering={has_status_filtering}, has_pod_keyword={has_pod_keyword}, has_war_zone_keyword={has_war_zone_keyword}, DELIVERED_in_query={('DELIVERED' in query_upper)}")
 
             # If using Status-based filtering for a "not delivered" query, REJECT it
             if has_status_filtering and has_pod_keyword and (has_war_zone_keyword or "DELIVERED" in query_upper):
