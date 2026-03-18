@@ -353,8 +353,10 @@ time.sleep(2)
 sql      = sqls[0] if sqls else "NO SQL CAPTURED"
 su       = sql.upper()
 dout     = db_results[0].strip() if db_results else "NO RESULT"
-nums     = re.findall(r'\d+', dout.replace(",",""))
-count    = int(nums[0]) if nums else None
+# Count actual result rows (not extract first number from column data)
+# Result format: header row + data rows; count non-header lines
+data_lines = [l for l in dout.split('\n') if l.strip() and not any(x in l.lower() for x in ['tracknumber', 'pod_location', 'pod location', '---', '='])]
+count = len(data_lines) if data_lines else None
 warzone_ok   = any(x in su for x in ["WAR", "GAZA", "UKRAINE", "RED SEA", "SUDAN", "LAT BETWEEN", "LNG BETWEEN"])
 pod_ok       = "POD" in su
 transit_ok   = "IN_TRANSIT" in su
