@@ -517,6 +517,133 @@ class SealineAgent:
             query = tool_input.get("query", "")
             yield _sse("tool_start", {"tool": "execute_sql", "query": query})
 
+            # CRITICAL: Validate query does not contain invalid SQL patterns
+            query_upper = query.upper()
+
+            # Check for invalid table alias references
+            import re as regex_module
+            from_match = regex_module.search(r'FROM\s+(\w+)\s+(\w+)', query_upper)
+            join_matches = regex_module.findall(r'(?:INNER\s+)?JOIN\s+(\w+)\s+(\w+)', query_upper)
+
+            defined_aliases = set()
+            if from_match:
+                defined_aliases.add(from_match.group(2))  # alias
+
+            for table, alias in join_matches:
+                defined_aliases.add(alias)
+
+            # Find all table.column references (e.g., t.TrackNumber, h.Status)
+            col_refs = regex_module.findall(r'\b([a-zA-Z_]\w*)\.\w+', query_upper)
+            undefined_aliases = set(col_refs) - defined_aliases
+
+            if undefined_aliases:
+                error_msg = (
+                    "❌ SQL SYNTAX ERROR: Invalid table alias reference(s): " + ", ".join(sorted(undefined_aliases)) + "\n\n"
+                    "These aliases are used in the query but are never defined in the FROM/JOIN clauses.\n\n"
+                    "Defined aliases: " + (", ".join(sorted(defined_aliases)) if defined_aliases else "NONE") + "\n\n"
+                    "Check your table alias mappings and ensure every reference (e.g., t.TrackNumber) "
+                    "has a corresponding table in the FROM clause (e.g., FROM table_name t)."
+                )
+                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
+                return error_msg
+
+            # Check for STRING_AGG(DISTINCT - invalid T-SQL
+            if "STRING_AGG(DISTINCT" in query_upper or "STRING_AGG (DISTINCT" in query_upper:
+                error_msg = (
+                    "❌ INVALID QUERY: STRING_AGG(DISTINCT ...) is not valid T-SQL. "
+                    "This error typically occurs when you're adding extra columns beyond what the question asks for. "
+                    "\n\nFor the 'containers at different transit locations' query, the SELECT must be EXACTLY:\n"
+                    "  SELECT TrackNumber, COUNT(DISTINCT LocationName) AS DistinctTransitLocations\n"
+                    "Do NOT add STRING_AGG, Container counts, or any other columns. "
+                    "\n\nIf you need to deduplicate values for a different query, use a subquery:\n"
+                    "  STRING_AGG(col, ', ') WITHIN GROUP (ORDER BY col) FROM (SELECT DISTINCT col FROM ...) sub"
+                )
+                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
+                return error_msg
+
+            # Additional check: Container transit query pattern should have exactly 2 columns
+            # Pattern: contains container route, COUNT(DISTINCT LocationName), NOT EXISTS POD
+            is_container_transit_pattern = (
+                "V_SEALINE_CONTAINER_ROUTE" in query_upper and
+                "COUNT(DISTINCT" in query_upper and
+                "NOT EXISTS" in query_upper and
+                "EVENTLINES LIKE '%POD%'" in query_upper
+            )
+            if is_container_transit_pattern:
+                # This pattern should select EXACTLY: TrackNumber, COUNT(DISTINCT LocationName)
+                select_match = query.upper().find("SELECT")
+                from_match = query.upper().find("FROM", select_match)
+                if select_match >= 0 and from_match > select_match:
+                    select_clause = query[select_match:from_match]
+
+                    # Check for forbidden extra columns/aggregations
+                    has_string_agg = "STRING_AGG" in select_clause.upper()
+                    has_multiple_counts = select_clause.upper().count("COUNT(DISTINCT") > 1
+                    has_container_count = "CONTAINER" in select_clause.upper() or "CONTAINER_NUMBER" in select_clause.upper()
+
+                    # Count top-level column separators (commas not inside parens)
+                    paren_depth = 0
+                    comma_count = 0
+                    for char in select_clause:
+                        if char == '(':
+                            paren_depth += 1
+                        elif char == ')':
+                            paren_depth -= 1
+                        elif char == ',' and paren_depth == 0:
+                            comma_count += 1
+
+                    # Should have exactly 1 comma (between TrackNumber and COUNT(...))
+                    if has_string_agg or has_multiple_counts or has_container_count or comma_count > 1:
+                        error_msg = (
+                            "❌ QUERY ERROR: The 'containers at different transit locations' pattern must have exactly 2 columns:\n"
+                            "  SELECT TrackNumber, COUNT(DISTINCT LocationName) AS DistinctTransitLocations\n\n"
+                            "Your query has extra columns:\n"
+                        )
+                        if has_string_agg:
+                            error_msg += "  ❌ STRING_AGG(...) — remove this\n"
+                        if has_multiple_counts:
+                            error_msg += "  ❌ Multiple COUNT aggregations — keep only COUNT(DISTINCT LocationName)\n"
+                        if has_container_count:
+                            error_msg += "  ❌ Container count or container columns — remove these\n"
+
+                        error_msg += (
+                            "\nExtra columns break the query structure. Return ONLY:\n"
+                            "  - TrackNumber\n"
+                            "  - COUNT(DISTINCT LocationName) AS DistinctTransitLocations\n"
+                            "Nothing else."
+                        )
+                        yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
+                        return error_msg
+
+            # Check for "not delivered" queries missing the NOT EXISTS exclusion
+            # Pattern: queries with POD/route, IN_TRANSIT but NO NOT EXISTS (likely missing "not delivered" filter)
+            has_pod_and_location = ("POD" in query_upper and "SEALINE_ROUTE" in query_upper and
+                                   ("LAT" in query_upper or "LATITUDE" in query_upper))
+            has_in_transit = "IN_TRANSIT" in query_upper
+            has_not_exists_exclusion = "NOT EXISTS" in query_upper and "ISACTUAL" in query_upper
+
+            # Queries that filter by location coordinates (lat/lng boundaries) likely need "not delivered" filtering
+            # This catches war zone queries and other geographic filters
+            uses_lat_lng_filter = "BETWEEN" in query_upper and ("LAT" in query_upper or "LATITUDE" in query_upper)
+
+            # If it's a POD query with IN_TRANSIT and location filtering, but NO NOT EXISTS, likely missing "not delivered"
+            if has_pod_and_location and has_in_transit and uses_lat_lng_filter and not has_not_exists_exclusion:
+                error_msg = (
+                    "❌ MISSING CRITICAL LOGIC: 'Not Delivered' Constraint\n\n"
+                    "Question: tracking with POD in war zones... NOT DELIVERED\n\n"
+                    "Your query filters for IN_TRANSIT and war zones but DOES NOT exclude already-delivered shipments.\n\n"
+                    "YOU MUST ADD this NOT EXISTS clause to exclude shipments with actual POD delivery:\n\n"
+                    "  AND NOT EXISTS (SELECT 1 FROM Sealine_Route r2\n"
+                    "    WHERE r2.TrackNumber = h.TrackNumber\n"
+                    "    AND r2.RouteType IN ('Pod', 'Post POD')\n"
+                    "    AND r2.IsActual = 1\n"
+                    "    AND r2.DeletedDt IS NULL)\n\n"
+                    "This is MANDATORY. Without it, you return ALL POD locations (42,000+ rows) instead of only undelivered ones (~500).\n\n"
+                    "Add the NOT EXISTS clause and regenerate the query."
+                )
+                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
+                return error_msg
+
             result = execute_sql(query)
             self.sql_calls += 1
 

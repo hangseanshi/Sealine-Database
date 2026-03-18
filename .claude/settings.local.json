@@ -3,7 +3,8 @@
     "allow": [
       "Skill(claude-api)",
       "Skill(claude-api:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }

@@ -324,8 +324,10 @@ time.sleep(2)
 sql      = sqls[0] if sqls else "NO SQL CAPTURED"
 su       = sql.upper()
 dout     = db_results[0].strip() if db_results else "NO RESULT"
-nums     = re.findall(r'\d+', dout.replace(",",""))
-count    = int(nums[0]) if nums else None
+# Count actual result rows (not extract first number from column data)
+# Result format: header row + data rows; count non-header lines
+data_lines = [l for l in dout.split('\n') if l.strip() and not any(x in l.lower() for x in ['tracknumber', 'distincttransitlocations', '---', '='])]
+count = len(data_lines) if data_lines else None
 transit_ok   = "ISTRANSITLOCATION" in su or "TRANSIT" in su
 view_ok      = "V_SEALINE_CONTAINER_ROUTE" in su
 having_ok    = "HAVING" in su
