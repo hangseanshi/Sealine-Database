@@ -1077,7 +1077,15 @@ class SealineAgent:
                     continue
 
                 events = [e.strip() for e in _re.split(r'<BR>', evraw, flags=_re.IGNORECASE) if e.strip()]
-                ckey   = cnum                      # display key: use Container_NUMBER directly (already includes TrackNumber)
+
+                # Fix container number if database returns duplicate TrackNumber prefix
+                # Example: "038VH9465510-038VH9465510-CAIU7249126" → "038VH9465510-CAIU7249126"
+                parts = cnum.split('-')
+                if len(parts) >= 3 and parts[0] == parts[1] == trk:
+                    # Remove the first duplicate prefix (keep TrackNumber-Container format)
+                    cnum = '-'.join(parts[1:])
+
+                ckey   = cnum                      # display key: use Container_NUMBER directly
 
                 # Deduplicate locations
                 loc_key = (round(lat, 5), round(lon, 5))
