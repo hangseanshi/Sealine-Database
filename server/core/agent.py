@@ -615,31 +615,97 @@ class SealineAgent:
                         yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
                         return error_msg
 
-            # Check for "not delivered" queries missing the NOT EXISTS exclusion
-            # Pattern: queries with POD/route, IN_TRANSIT but NO NOT EXISTS (likely missing "not delivered" filter)
-            has_pod_and_location = ("POD" in query_upper and "SEALINE_ROUTE" in query_upper and
-                                   ("LAT" in query_upper or "LATITUDE" in query_upper))
-            has_in_transit = "IN_TRANSIT" in query_upper
-            has_not_exists_exclusion = "NOT EXISTS" in query_upper and "ISACTUAL" in query_upper
+            # Check for incorrect Status-based filtering in "not delivered" queries
+            # Pattern: queries that filter Status field (e.g., Status <> 'DELIVERED') for "not delivered" intent
+            has_status_filtering = (("STATUS" in query_upper and "<>" in query_upper) or
+                                   ("STATUS" in query_upper and "!=" in query_upper) or
+                                   ("STATUS" in query_upper and "NOT IN" in query_upper))
+            has_pod_keyword = "POD" in query_upper
+            has_war_zone_keyword = any(term in query_upper for term in ["WAR", "ZONE", "RED SEA", "PERSIAN", "ADEN", "MEDITERRANEAN"])
 
-            # Queries that filter by location coordinates (lat/lng boundaries) likely need "not delivered" filtering
-            # This catches war zone queries and other geographic filters
-            uses_lat_lng_filter = "BETWEEN" in query_upper and ("LAT" in query_upper or "LATITUDE" in query_upper)
-
-            # If it's a POD query with IN_TRANSIT and location filtering, but NO NOT EXISTS, likely missing "not delivered"
-            if has_pod_and_location and has_in_transit and uses_lat_lng_filter and not has_not_exists_exclusion:
+            # If using Status-based filtering for a "not delivered" query, REJECT it
+            if has_status_filtering and has_pod_keyword and (has_war_zone_keyword or "DELIVERED" in query_upper):
                 error_msg = (
-                    "❌ MISSING CRITICAL LOGIC: 'Not Delivered' Constraint\n\n"
-                    "Question: tracking with POD in war zones... NOT DELIVERED\n\n"
-                    "Your query filters for IN_TRANSIT and war zones but DOES NOT exclude already-delivered shipments.\n\n"
-                    "YOU MUST ADD this NOT EXISTS clause to exclude shipments with actual POD delivery:\n\n"
+                    "❌ INCORRECT LOGIC: Status-Based 'Not Delivered' Filter\n\n"
+                    "Your query uses: WHERE h.Status <> 'DELIVERED' or similar Status filtering\n\n"
+                    "THIS IS WRONG. Status field is a summary and does NOT determine delivery status.\n"
+                    "A shipment with Status='IN_TRANSIT' can still be delivered if POD has IsActual=1.\n\n"
+                    "YOU MUST use NOT EXISTS with IsActual flag instead:\n\n"
                     "  AND NOT EXISTS (SELECT 1 FROM Sealine_Route r2\n"
                     "    WHERE r2.TrackNumber = h.TrackNumber\n"
                     "    AND r2.RouteType IN ('Pod', 'Post POD')\n"
                     "    AND r2.IsActual = 1\n"
                     "    AND r2.DeletedDt IS NULL)\n\n"
-                    "This is MANDATORY. Without it, you return ALL POD locations (42,000+ rows) instead of only undelivered ones (~500).\n\n"
-                    "Add the NOT EXISTS clause and regenerate the query."
+                    "The IsActual = 1 flag is the ONLY reliable indicator of actual delivery.\n"
+                    "Remove Status-based filtering and add the NOT EXISTS clause."
+                )
+                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
+                return error_msg
+
+            # Check for "not delivered" queries missing the NOT EXISTS exclusion
+            # Pattern: queries with POD + geographic filtering (BETWEEN/LAT/LNG) but NO NOT EXISTS
+            has_pod_keyword = "POD" in query_upper
+            has_sealine_route = "SEALINE_ROUTE" in query_upper
+            has_location_filter = "LAT" in query_upper or "LATITUDE" in query_upper
+            uses_lat_lng_filter = "BETWEEN" in query_upper and ("LAT" in query_upper or "LATITUDE" in query_upper)
+            has_not_exists_exclusion = "NOT EXISTS" in query_upper and "ISACTUAL" in query_upper
+
+            # Check if query is a flat SELECT (not using WITH/CTE) for a war zone query
+            is_flat_select = "WITH" not in query_upper and "SELECT" in query_upper[:20]  # Flat SELECT at start
+            has_two_cte_structure = "WITH" in query_upper and query_upper.count("AS (") >= 2
+
+            # If query has POD + location filtering (war zones) but NO NOT EXISTS, it's missing the "not delivered" constraint
+            # This applies regardless of whether IN_TRANSIT is present
+            if has_pod_keyword and has_sealine_route and has_location_filter and uses_lat_lng_filter and not has_not_exists_exclusion:
+                structure_issue = ""
+                if is_flat_select and not has_two_cte_structure:
+                    structure_issue = "  • STRUCTURE PROBLEM: You generated a flat SELECT instead of the MANDATORY 2-CTE pattern\n"
+
+                error_msg = (
+                    "❌ CRITICAL ERROR: War Zone POD Query Invalid\n\n"
+                    "Your query attempts to find tracking numbers with POD in war zones but:\n"
+                    "  1. Does NOT follow the MANDATORY 2-CTE structure (WITH pod_locations AS ..., war_zone_pod AS ...)\n"
+                    "  2. Is MISSING the critical NOT EXISTS clause for 'not delivered' filtering\n"
+                    "  3. Will return WRONG RESULTS (42,000+ rows instead of ~96 undelivered ones)\n"
+                    f"{structure_issue}\n"
+                    "YOU MUST use this EXACT 2-CTE structure (copy-paste if needed):\n\n"
+                    "WITH pod_locations AS (\n"
+                    "    SELECT DISTINCT\n"
+                    "        h.TrackNumber,\n"
+                    "        l.Name AS POD_Location,\n"
+                    "        TRY_CAST(l.Lat AS FLOAT) AS Lat,\n"
+                    "        TRY_CAST(l.Lng AS FLOAT) AS Lng\n"
+                    "    FROM Sealine_Header h\n"
+                    "    INNER JOIN Sealine_Route r ON h.TrackNumber = r.TrackNumber AND r.DeletedDt IS NULL\n"
+                    "    INNER JOIN Sealine_Locations l ON r.TrackNumber = l.TrackNumber AND r.Location_Id = l.Id AND l.DeletedDt IS NULL\n"
+                    "    WHERE h.Status = 'IN_TRANSIT'\n"
+                    "      AND r.RouteType = 'Pod'\n"
+                    "      AND r.DeletedDt IS NULL\n"
+                    "      AND NOT EXISTS (\n"
+                    "          SELECT 1 FROM Sealine_Route r2\n"
+                    "          WHERE r2.TrackNumber = h.TrackNumber\n"
+                    "            AND r2.RouteType IN ('Pod', 'Post POD')\n"
+                    "            AND r2.IsActual = 1\n"
+                    "            AND r2.DeletedDt IS NULL\n"
+                    "      )\n"
+                    "),\n"
+                    "war_zone_pod AS (\n"
+                    "    SELECT\n"
+                    "        TrackNumber, POD_Location, Lat, Lng\n"
+                    "    FROM pod_locations\n"
+                    "    WHERE\n"
+                    "        (Lat BETWEEN 29 AND 33.5 AND Lng BETWEEN 33.8 AND 36.5) OR\n"
+                    "        (Lat BETWEEN 41 AND 48 AND Lng BETWEEN 28 AND 42) OR\n"
+                    "        (Lat BETWEEN 12 AND 28 AND Lng BETWEEN 32 AND 52) OR\n"
+                    "        (Lat BETWEEN 8 AND 23 AND Lng BETWEEN 22 AND 38)\n"
+                    ")\n"
+                    "SELECT TrackNumber, POD_Location, Lat, Lng FROM war_zone_pod ORDER BY TrackNumber\n\n"
+                    "CRITICAL RULES:\n"
+                    "  • Use ONLY this structure — do NOT flatten into a single SELECT\n"
+                    "  • Return EXACTLY 4 columns: TrackNumber, POD_Location, Lat, Lng\n"
+                    "  • Use base tables (Sealine_Header, Sealine_Route, Sealine_Locations) — NOT views\n"
+                    "  • The NOT EXISTS clause with IsActual=1 is MANDATORY\n"
+                    "  • Geographic boundaries are FIXED and must not be changed\n"
                 )
                 yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
                 return error_msg
