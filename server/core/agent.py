@@ -1077,7 +1077,7 @@ class SealineAgent:
                     continue
 
                 events = [e.strip() for e in _re.split(r'<BR>', evraw, flags=_re.IGNORECASE) if e.strip()]
-                ckey   = f"{trk}-{cnum}"          # display key: TrackNumber-ContainerNumber
+                ckey   = cnum                      # display key: use Container_NUMBER directly (already includes TrackNumber)
 
                 # Deduplicate locations
                 loc_key = (round(lat, 5), round(lon, 5))
