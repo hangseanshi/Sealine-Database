@@ -1,7 +1,7 @@
 import requests, json, time, re, difflib
 from datetime import datetime
 
-BASE = "http://localhost:8080/api"
+BASE = "http://localhost:5000/api"
 
 # Expected SQL from test plan doc
 EXPECTED_SQL = {
