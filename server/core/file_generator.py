@@ -1179,10 +1179,10 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
     var mAngle = Math.atan2(toPt[1]-fromPt[1], toPt[0]-fromPt[0]) * 180/Math.PI;
     [0.25, 0.50, 0.75].forEach(function(f) {
       var aLat = fromPt[0] + f*(toPt[0]-fromPt[0]), aLon = fromPt[1] + f*(toPt[1]-fromPt[1]);
-      var mSvg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+      var mSvg = '<svg width="8" height="8" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
         + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
         + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
-      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
+      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[8,8], iconAnchor:[4,4]}), interactive:false, zIndexOffset:100}).addTo(map));
     });
     return {line: _sl, arrows: arrows};
   }
@@ -1205,10 +1205,10 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
   [0.25, 0.50, 0.75].forEach(function(tf) {
     var arrPt = bzPt(tf), pa = bzPt(tf-0.02), pb = bzPt(tf+0.02);
     var angle = Math.atan2(pb[1]-pa[1], pb[0]-pa[0]) * 180/Math.PI;
-    var svg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+    var svg = '<svg width="8" height="8" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
       + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
       + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
-    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
+    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[8,8], iconAnchor:[4,4]}), interactive:false, zIndexOffset:100}).addTo(map));
   });
   return {line: _cl, arrows: arrows};
 }
@@ -2062,10 +2062,10 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
     var mAngle = Math.atan2(toPt[1]-fromPt[1], toPt[0]-fromPt[0]) * 180/Math.PI;
     [0.25, 0.50, 0.75].forEach(function(f) {
       var aLat = fromPt[0] + f*(toPt[0]-fromPt[0]), aLon = fromPt[1] + f*(toPt[1]-fromPt[1]);
-      var mSvg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+      var mSvg = '<svg width="8" height="8" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
         + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
         + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
-      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
+      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[8,8], iconAnchor:[4,4]}), interactive:false, zIndexOffset:100}).addTo(map));
     });
     return {line: _sl, arrows: arrows};
   }
@@ -2088,10 +2088,10 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
   [0.25, 0.50, 0.75].forEach(function(tf) {
     var arrPt = bzPt(tf), pa = bzPt(tf-0.02), pb = bzPt(tf+0.02);
     var angle = Math.atan2(pb[1]-pa[1], pb[0]-pa[0]) * 180/Math.PI;
-    var svg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+    var svg = '<svg width="8" height="8" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
       + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
       + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
-    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
+    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[8,8], iconAnchor:[4,4]}), interactive:false, zIndexOffset:100}).addTo(map));
   });
   return {line: _cl, arrows: arrows};
 }
