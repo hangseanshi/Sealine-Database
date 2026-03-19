@@ -318,6 +318,59 @@ CONTAINER_ROUTES_TOOL = _to_openai_tool(
 )
 
 
+CONTAINER_SEAROUTE_MAP_TOOL = _to_openai_tool(
+    "show_container_searoute",
+    (
+        "Generate an interactive container route map using realistic sea routes "
+        "(following coastlines, canals, and established maritime shipping lanes). "
+        "ONLY call this tool when the user's message contains the word 'searoute' "
+        "AND mentions containers. If the user does NOT say 'searoute', use "
+        "show_container_routes instead. "
+        "Each container gets its own coloured route. "
+        "Supply explicit lists (track_numbers / container_numbers) OR subqueries "
+        "(track_number_subquery / container_number_subquery) — not both kinds at once."
+    ),
+    {
+        "type": "object",
+        "properties": {
+            "track_numbers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Explicit list of tracking numbers.",
+            },
+            "container_numbers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Explicit list of container numbers.",
+            },
+            "track_number_subquery": {
+                "type": "string",
+                "description": "SQL SELECT returning TrackNumber values for IN clause.",
+            },
+            "container_number_subquery": {
+                "type": "string",
+                "description": "SQL SELECT returning Container_NUMBER values for IN clause.",
+            },
+            "title": {
+                "type": "string",
+                "description": "Map title shown at the top.",
+            },
+            "highlight_regions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "color": {"type": "string"},
+                    },
+                    "required": ["name"],
+                },
+                "description": "Optional list of countries/regions to highlight.",
+            },
+        },
+    },
+)
+
 LOCATION_BUBBLE_MAP_TOOL = _to_openai_tool(
     "show_location_map",
     (
@@ -564,6 +617,7 @@ class SealineAgent:
         tools.append(TRACKING_ROUTES_TOOL)
         tools.append(TRACKING_SEAROUTE_MAP_TOOL)
         tools.append(CONTAINER_ROUTES_TOOL)
+        tools.append(CONTAINER_SEAROUTE_MAP_TOOL)
         tools.append(GEOCODE_LOCATION_TOOL)
         tools.append(LOCATION_BUBBLE_MAP_TOOL)
         tools.append(CHOROPLETH_MAP_TOOL)
@@ -1356,6 +1410,285 @@ class SealineAgent:
                     )
                 except Exception as exc:
                     error_msg = f"Container map error: {exc}"
+                    logger.exception(error_msg)
+                    yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
+                    return error_msg
+            return result.text
+
+        elif name == "show_container_searoute":
+            # ── Container sea-route map (uses searoute Python package) ─────
+            # Same as show_container_routes but draws realistic maritime
+            # routes. Uses curve lines for "land" vessel segments.
+            import re as _re
+            import searoute as _sr
+
+            track_numbers             = tool_input.get("track_numbers") or []
+            container_numbers         = tool_input.get("container_numbers") or []
+            track_number_subquery     = (tool_input.get("track_number_subquery") or "").strip()
+            container_number_subquery = (tool_input.get("container_number_subquery") or "").strip()
+            title = tool_input.get("title") or "Container Sea Routes"
+
+            if not track_numbers and not container_numbers \
+                    and not track_number_subquery and not container_number_subquery:
+                msg = ("show_container_searoute requires track_numbers, container_numbers, "
+                       "track_number_subquery, or container_number_subquery.")
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            if track_number_subquery:
+                where = f"v.TrackNumber IN ({track_number_subquery})"
+            elif container_number_subquery:
+                where = f"v.Container_NUMBER IN ({container_number_subquery})"
+            elif track_numbers:
+                vals  = ", ".join(f"'{v}'" for v in track_numbers)
+                where = f"v.TrackNumber IN ({vals})"
+            else:
+                vals  = ", ".join(f"'{v}'" for v in container_numbers)
+                where = f"v.Container_NUMBER IN ({vals})"
+
+            sql = (
+                "SELECT v.Container_NUMBER, v.TrackNumber, v.Lat, v.Lng, "
+                "v.LocationName, v.MinOrderId, v.EventLines, v.Vessel "
+                "FROM v_sealine_container_route v "
+                f"WHERE {where} AND v.Lat IS NOT NULL AND v.Lng IS NOT NULL "
+                "ORDER BY v.TrackNumber, v.Container_NUMBER, v.MinOrderId ASC"
+            )
+
+            yield _sse("tool_start", {"tool": "execute_sql", "query": sql})
+            result = execute_sql(sql)
+            self.sql_calls += 1
+            yield _sse("tool_result", {"tool": "execute_sql", "result": result.text, "truncated": result.truncated})
+
+            if result.error or not result.rows:
+                _filter_desc = (
+                    track_number_subquery or container_number_subquery
+                    or track_numbers or container_numbers
+                )
+                msg = f"No container route data found for {_filter_desc}."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            cols = [c.upper() for c in (result.columns or [])]
+            try:
+                i_cnum   = cols.index("CONTAINER_NUMBER")
+                i_trk    = cols.index("TRACKNUMBER")
+                i_lat    = cols.index("LAT")
+                i_lon    = cols.index("LNG")
+                i_loc    = cols.index("LOCATIONNAME")
+                i_events = cols.index("EVENTLINES")
+                i_vessel = cols.index("VESSEL")
+            except ValueError:
+                i_cnum, i_trk, i_lat, i_lon, i_loc, i_events, i_vessel = 0, 1, 2, 3, 4, 6, 7
+
+            loc_index: dict  = {}
+            locations: list  = []
+            ctr_routes: dict = {}
+            ctr_order: list  = []
+
+            for row in result.rows:
+                try:
+                    cnum     = str(row[i_cnum]).strip()
+                    trk      = str(row[i_trk]).strip()
+                    lat      = float(row[i_lat])
+                    lon      = float(row[i_lon])
+                    loc_name = str(row[i_loc]).strip() if row[i_loc] else ""
+                    evraw    = str(row[i_events]).strip() if row[i_events] else ""
+                    vessel   = str(row[i_vessel]).strip() if row[i_vessel] else ""
+                except (ValueError, IndexError, TypeError):
+                    continue
+
+                events = [e.strip() for e in _re.split(r'<BR>', evraw, flags=_re.IGNORECASE) if e.strip()]
+
+                # Fix container number if database returns duplicate TrackNumber prefix
+                parts = cnum.split('-')
+                if len(parts) >= 3 and parts[0] == parts[1] == trk:
+                    cnum = '-'.join(parts[1:])
+                ckey = cnum
+
+                loc_key = (round(lat, 5), round(lon, 5))
+                if loc_key not in loc_index:
+                    loc_index[loc_key] = len(locations)
+                    locode_match = _re.findall(r'\(([^)]+)\)', loc_name)
+                    locode = locode_match[-1] if locode_match else ""
+                    locations.append({"name": loc_name, "lat": lat, "lon": lon, "locode": locode, "containers": {}})
+                idx = loc_index[loc_key]
+
+                if ckey not in locations[idx]["containers"]:
+                    locations[idx]["containers"][ckey] = {"key": ckey, "events": events}
+
+                if ckey not in ctr_routes:
+                    ctr_routes[ckey] = {"trk": trk, "stops": [], "vessels": []}
+                    ctr_order.append(ckey)
+                ctr_routes[ckey]["stops"].append(idx)
+                ctr_routes[ckey]["vessels"].append(vessel)
+
+            for loc in locations:
+                loc["containers"] = sorted(loc["containers"].values(), key=lambda c: c["key"])
+
+            if not locations:
+                _filter_desc = (
+                    track_number_subquery or container_number_subquery
+                    or track_numbers or container_numbers
+                )
+                msg = f"No mappable coordinates found for {_filter_desc}."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            # ── Color: per-TrackNumber base hue, light→dark per container ──
+            TRACK_BASE_COLORS = [
+                "#27AE60", "#2980B9", "#E67E22", "#8E44AD", "#C0392B",
+                "#16A085", "#D35400", "#1A5276", "#6C3483", "#1E8449",
+            ]
+
+            def _blend(hex_col: str, factor: float) -> str:
+                r = int(hex_col[1:3], 16)
+                g = int(hex_col[3:5], 16)
+                b = int(hex_col[5:7], 16)
+                if factor <= 1.0:
+                    r = int(r * factor + 255 * (1 - factor))
+                    g = int(g * factor + 255 * (1 - factor))
+                    b = int(b * factor + 255 * (1 - factor))
+                else:
+                    r = max(0, int(r * (2 - factor)))
+                    g = max(0, int(g * (2 - factor)))
+                    b = max(0, int(b * (2 - factor)))
+                return "#%02x%02x%02x" % (min(255, r), min(255, g), min(255, b))
+
+            unique_trks   = list(dict.fromkeys(ctr_routes[k]["trk"] for k in ctr_order))
+            trk_base      = {t: TRACK_BASE_COLORS[i % len(TRACK_BASE_COLORS)]
+                             for i, t in enumerate(unique_trks)}
+            trk_containers: dict = {}
+            for ckey in ctr_order:
+                trk_containers.setdefault(ctr_routes[ckey]["trk"], []).append(ckey)
+
+            # ── Compute sea routes per container ───────────────────────────
+            # For legs where Vessel does NOT contain "land", use searoute.
+            # For "land" legs, sea_legs entry is None → JS uses straight line.
+            #
+            # Strategy: store original lon for each location, compute searoute
+            # with original coords, then apply a consistent lon offset so all
+            # stops and lines end up on the same side of the map.
+            # We use the FIRST container's route to establish the lon shift
+            # for each location, then all subsequent containers reuse it.
+            orig_lons = {i: loc["lon"] for i, loc in enumerate(locations)}
+            loc_shifted_lon: dict = {}  # loc_idx → shifted longitude
+
+            all_sea_legs: dict = {}
+            for ckey in ctr_order:
+                cinfo = ctr_routes[ckey]
+                stops = cinfo["stops"]
+                vessels = cinfo["vessels"]
+                all_sea_legs[ckey] = []
+                for si in range(len(stops) - 1):
+                    from_idx = stops[si]
+                    to_idx   = stops[si + 1]
+                    vessel   = vessels[si] if si < len(vessels) else ""
+                    is_land  = "land" in vessel.lower()
+
+                    if is_land:
+                        all_sea_legs[ckey].append(None)
+                        continue
+
+                    # Always use original coordinates for searoute
+                    try:
+                        route_geojson = _sr.searoute(
+                            [orig_lons[from_idx], locations[from_idx]["lat"]],
+                            [orig_lons[to_idx], locations[to_idx]["lat"]],
+                        )
+                        coords = route_geojson["geometry"]["coordinates"]
+
+                        # Compute lon offset to align with already-shifted origin
+                        shifted_from = loc_shifted_lon.get(from_idx, orig_lons[from_idx])
+                        lon_offset = shifted_from - coords[0][0] if coords else 0
+
+                        leg_points = [{"lat": c[1], "lon": c[0] + lon_offset} for c in coords]
+
+                        # Record the destination's shifted lon (first write wins)
+                        dest_shifted = coords[-1][0] + lon_offset if coords else orig_lons[to_idx]
+                        if to_idx not in loc_shifted_lon:
+                            loc_shifted_lon[to_idx] = dest_shifted
+
+                        # Prepend/append exact stop coords so line connects to markers
+                        from_pt = {"lat": locations[from_idx]["lat"], "lon": shifted_from}
+                        to_pt   = {"lat": locations[to_idx]["lat"], "lon": loc_shifted_lon[to_idx]}
+                        leg_points.insert(0, from_pt)
+                        leg_points.append(to_pt)
+                    except Exception as exc:
+                        logger.warning("searoute failed: %s", exc)
+                        leg_points = None
+                    all_sea_legs[ckey].append(leg_points)
+
+            # Propagate shifts FORWARD to locations that were only reached
+            # via land segments (and thus never got a searoute-computed shift).
+            # Only propagate from→to (forward along the route), never backward,
+            # so origin stops like Houston keep their original position.
+            changed = True
+            while changed:
+                changed = False
+                for ckey in ctr_order:
+                    stops = ctr_routes[ckey]["stops"]
+                    for si in range(len(stops) - 1):
+                        from_idx = stops[si]
+                        to_idx   = stops[si + 1]
+                        if from_idx in loc_shifted_lon and to_idx not in loc_shifted_lon:
+                            offset = loc_shifted_lon[from_idx] - orig_lons[from_idx]
+                            loc_shifted_lon[to_idx] = orig_lons[to_idx] + offset
+                            changed = True
+
+            # Apply shifted longitudes to location markers
+            for loc_idx, shifted_lon in loc_shifted_lon.items():
+                locations[loc_idx]["lon"] = shifted_lon
+
+            routes = []
+            for ckey in ctr_order:
+                cinfo    = ctr_routes[ckey]
+                t        = cinfo["trk"]
+                siblings = trk_containers[t]
+                n        = len(siblings)
+                pos      = siblings.index(ckey)
+                factor   = 0.35 + (pos / max(n - 1, 1)) * 0.75 if n > 1 else 0.85
+                routes.append({
+                    "key":      ckey,
+                    "trk":      t,
+                    "color":    _blend(trk_base[t], factor),
+                    "stops":    cinfo["stops"],
+                    "vessels":  cinfo["vessels"],
+                    "sea_legs": all_sea_legs.get(ckey, []),
+                })
+
+            highlight_regions = tool_input.get("highlight_regions") or []
+            for _r in highlight_regions:
+                if not _r.get("color"):
+                    _r["color"] = "rgba(255,165,0,0.30)"
+            map_data = {"locations": locations, "routes": routes, "highlight_regions": highlight_regions}
+            unique_containers = len(routes)
+            unique_stops      = len(locations)
+
+            yield _sse("tool_start", {"tool": "generate_plot", "query": title})
+            if _FILE_TOOLS_AVAILABLE:
+                try:
+                    from server.core.file_generator import (
+                        _short_uuid, _slugify, ensure_file_store, _file_meta,
+                        _plot_container_searoute_map,
+                    )
+                    file_id   = _short_uuid()
+                    slug      = _slugify(title)
+                    ensure_file_store(self.file_store_path)
+                    file_info = _plot_container_searoute_map(
+                        title=title,
+                        data=map_data,
+                        file_id=file_id,
+                        title_slug=slug,
+                        file_store_path=self.file_store_path,
+                    )
+                    self.generated_files.append(file_info)
+                    yield _sse("file_generated", file_info)
+                    return (
+                        f"Container sea route map generated: {unique_containers} container(s), "
+                        f"{unique_stops} unique stop(s)."
+                    )
+                except Exception as exc:
+                    error_msg = f"Container sea route map error: {exc}"
                     logger.exception(error_msg)
                     yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
                     return error_msg
