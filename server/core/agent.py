@@ -201,6 +201,48 @@ TRACKING_ROUTES_TOOL = _to_openai_tool(
     },
 )
 
+TRACKING_SEAROUTE_MAP_TOOL = _to_openai_tool(
+    "show_tracking_searoute",
+    (
+        "Generate an interactive route map using realistic sea routes (following coastlines, "
+        "canals, and established maritime shipping lanes) for one or more tracking numbers. "
+        "ONLY call this tool when the user's message contains the word 'searoute'. "
+        "If the user does NOT say 'searoute', use show_tracking_routes instead. "
+        "Supply either track_numbers (explicit list) OR subquery (a SQL SELECT that returns "
+        "TrackNumber values) — not both."
+    ),
+    {
+        "type": "object",
+        "properties": {
+            "track_numbers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Explicit list of tracking numbers.",
+            },
+            "subquery": {
+                "type": "string",
+                "description": "A SQL SELECT returning TrackNumber values for IN clause.",
+            },
+            "title": {
+                "type": "string",
+                "description": "Map title shown at the top.",
+            },
+            "highlight_regions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "color": {"type": "string"},
+                    },
+                    "required": ["name"],
+                },
+                "description": "Optional list of countries/regions to highlight on the map.",
+            },
+        },
+    },
+)
+
 CONTAINER_ROUTES_TOOL = _to_openai_tool(
     "show_container_routes",
     (
@@ -520,6 +562,7 @@ class SealineAgent:
         tools.append(_get_pdf_tool_def())
         tools.append(_get_excel_tool_def())
         tools.append(TRACKING_ROUTES_TOOL)
+        tools.append(TRACKING_SEAROUTE_MAP_TOOL)
         tools.append(CONTAINER_ROUTES_TOOL)
         tools.append(GEOCODE_LOCATION_TOOL)
         tools.append(LOCATION_BUBBLE_MAP_TOOL)
@@ -876,6 +919,231 @@ class SealineAgent:
                     )
                 except Exception as exc:
                     error_msg = f"Tracking route map error: {exc}"
+                    logger.exception(error_msg)
+                    yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
+                    return error_msg
+            return result.text
+
+        elif name == "show_tracking_searoute":
+            # ── Sea-route tracking map tool (uses searoute Python package) ──
+            # Same data as show_tracking_routes but draws realistic maritime
+            # routes instead of arc lines. ONLY used when user says "searoute".
+            import re as _re
+            import searoute as _sr
+
+            track_numbers = tool_input.get("track_numbers") or []
+            subquery      = (tool_input.get("subquery") or "").strip()
+            title         = tool_input.get("title") or "Tracking Sea Route Map"
+
+            if not track_numbers and not subquery:
+                msg = "show_tracking_searoute requires track_numbers or a subquery."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            if subquery:
+                in_clause = subquery
+            else:
+                in_clause = ", ".join(f"'{v}'" for v in track_numbers)
+
+            sql = (
+                "SELECT TrackNumber, Lat, Lng, LocationName, "
+                "RouteType, MinOrderId, NoOfContainers, EventLines "
+                "FROM v_sealine_tracking_route "
+                f"WHERE TrackNumber IN ({in_clause}) "
+                "ORDER BY TrackNumber, MinOrderId ASC"
+            )
+
+            yield _sse("tool_start", {"tool": "execute_sql", "query": sql})
+            result = execute_sql(sql)
+            self.sql_calls += 1
+            yield _sse("tool_result", {"tool": "execute_sql", "result": result.text, "truncated": result.truncated})
+
+            if result.error or not result.rows:
+                msg = f"No route data found for tracking numbers: {track_numbers}."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            cols = [c.upper() for c in (result.columns or [])]
+            try:
+                i_trk    = cols.index("TRACKNUMBER")
+                i_lat    = cols.index("LAT")
+                i_lon    = cols.index("LNG")
+                i_name   = cols.index("LOCATIONNAME")
+                i_rtype  = cols.index("ROUTETYPE")
+                i_order  = cols.index("MINORDERID")
+                i_noc    = cols.index("NOOFCONTAINERS")
+                i_events = cols.index("EVENTLINES")
+            except ValueError:
+                i_trk, i_lat, i_lon, i_name, i_rtype, i_order, i_noc, i_events = \
+                    0, 1, 2, 3, 4, 5, 6, 7
+
+            TRACK_COLORS = [
+                "#27AE60", "#2980B9", "#E67E22", "#8E44AD", "#C0392B",
+                "#16A085", "#D35400", "#1A5276", "#6C3483", "#1E8449",
+            ]
+
+            loc_index: dict = {}
+            locations: list = []
+            trk_routes: dict = {}
+            trk_order: list = []
+            trk_containers: dict = {}
+
+            for row in result.rows:
+                try:
+                    trk        = str(row[i_trk]).strip()
+                    lat        = float(row[i_lat])
+                    lon        = float(row[i_lon])
+                    display    = str(row[i_name]).strip() if row[i_name] else ""
+                    route_type = str(row[i_rtype]).strip() if row[i_rtype] else ""
+                    noc_raw    = row[i_noc]
+                    events_raw = str(row[i_events]).strip() if row[i_events] else ""
+                except (ValueError, IndexError, TypeError):
+                    continue
+
+                if trk not in trk_containers:
+                    try:
+                        trk_containers[trk] = int(noc_raw) if noc_raw is not None else 0
+                    except (ValueError, TypeError):
+                        trk_containers[trk] = 0
+
+                events = [e.strip() for e in _re.split(r'<BR>', events_raw, flags=_re.IGNORECASE) if e.strip()]
+
+                loc_key = (round(lat, 5), round(lon, 5))
+                if loc_key not in loc_index:
+                    loc_index[loc_key] = len(locations)
+                    # Extract LOCode from last parentheses in LocationName
+                    locode_match = _re.findall(r'\(([^)]+)\)', display)
+                    locode = locode_match[-1] if locode_match else ""
+                    locations.append({"name": display, "lat": lat, "lon": lon, "locode": locode, "tracks": []})
+                idx = loc_index[loc_key]
+
+                locations[idx]["tracks"].append({
+                    "trk": trk,
+                    "routeType": route_type,
+                    "events": events,
+                })
+
+                if trk not in trk_routes:
+                    trk_routes[trk] = []
+                    trk_order.append(trk)
+                trk_routes[trk].append(idx)
+
+            if not locations:
+                msg = f"No mappable coordinates found for {track_numbers}."
+                yield _sse("tool_result", {"tool": name, "result": msg, "truncated": False})
+                return msg
+
+            # ── Compute sea routes between consecutive stops ────────────────
+            # For each route segment, call searoute to get the maritime polyline.
+            # Store as sea_legs: {trk: [[{lat, lon}, ...], ...]}
+            # Also track shifted longitudes: when searoute crosses the
+            # antimeridian the coordinates continue past ±180° (e.g. -239°
+            # instead of 121°). We shift location markers to match so
+            # stops and lines appear on the same side of the map.
+            sea_legs: dict = {}
+            loc_shifted_lon: dict = {}  # loc_idx → shifted longitude
+
+            for trk in trk_order:
+                stops = trk_routes[trk]
+                sea_legs[trk] = []
+                for si in range(len(stops) - 1):
+                    from_idx = stops[si]
+                    to_idx   = stops[si + 1]
+                    from_loc = locations[from_idx]
+                    to_loc   = locations[to_idx]
+
+                    # Always call searoute with original (canonical) coordinates
+                    orig_from_lon = from_loc["lon"]
+                    orig_to_lon   = to_loc["lon"]
+
+                    try:
+                        route_geojson = _sr.searoute(
+                            [orig_from_lon, from_loc["lat"]],
+                            [orig_to_lon, to_loc["lat"]],
+                        )
+                        coords = route_geojson["geometry"]["coordinates"]
+
+                        # Determine the lon shift needed so this leg connects
+                        # to the previous leg's endpoint. The shift is the
+                        # difference between where we want the origin to be
+                        # (the shifted lon from the previous leg) and where
+                        # searoute placed it (canonical lon).
+                        shifted_from = loc_shifted_lon.get(from_idx, orig_from_lon)
+                        lon_offset = shifted_from - coords[0][0] if coords else 0
+
+                        # Apply the offset to all points in this leg
+                        leg_points = [{"lat": c[1], "lon": c[0] + lon_offset} for c in coords]
+
+                        # Track where the destination ended up (shifted)
+                        if coords:
+                            loc_shifted_lon[to_idx] = coords[-1][0] + lon_offset
+
+                        # Prepend/append exact stop coordinates so the line
+                        # connects to the port markers (searoute snaps to
+                        # the nearest shipping lane, not the exact port).
+                        from_pt = {"lat": from_loc["lat"], "lon": shifted_from}
+                        to_pt   = {"lat": to_loc["lat"], "lon": loc_shifted_lon[to_idx]}
+                        leg_points.insert(0, from_pt)
+                        leg_points.append(to_pt)
+
+                    except Exception as exc:
+                        logger.warning("searoute failed %s→%s: %s", from_loc["name"], to_loc["name"], exc)
+                        shifted_from = loc_shifted_lon.get(from_idx, orig_from_lon)
+                        leg_points = [
+                            {"lat": from_loc["lat"], "lon": shifted_from},
+                            {"lat": to_loc["lat"], "lon": orig_to_lon},
+                        ]
+                    sea_legs[trk].append(leg_points)
+
+            # Apply shifted longitudes to location markers so they align
+            # with the sea route polylines on the map
+            for loc_idx, shifted_lon in loc_shifted_lon.items():
+                locations[loc_idx]["lon"] = shifted_lon
+
+            routes = [
+                {
+                    "trk":            trk,
+                    "color":          TRACK_COLORS[i % len(TRACK_COLORS)],
+                    "stops":          trk_routes[trk],
+                    "noOfContainers": trk_containers.get(trk, 0),
+                    "sea_legs":       sea_legs.get(trk, []),
+                }
+                for i, trk in enumerate(trk_order)
+            ]
+
+            highlight_regions = tool_input.get("highlight_regions") or []
+            for _r in highlight_regions:
+                if not _r.get("color"):
+                    _r["color"] = "rgba(255,165,0,0.30)"
+            map_data = {"locations": locations, "routes": routes, "highlight_regions": highlight_regions}
+            unique_tracks = len(routes)
+            unique_stops  = len(locations)
+
+            yield _sse("tool_start", {"tool": "generate_plot", "query": title})
+            if _FILE_TOOLS_AVAILABLE:
+                try:
+                    from server.core.file_generator import (
+                        _short_uuid, _slugify, ensure_file_store, _file_meta,
+                        _plot_tracking_searoute_map,
+                    )
+                    file_id   = _short_uuid()
+                    slug      = _slugify(title)
+                    ensure_file_store(self.file_store_path)
+                    file_info = _plot_tracking_searoute_map(
+                        title=title,
+                        data=map_data,
+                        file_id=file_id,
+                        title_slug=slug,
+                        file_store_path=self.file_store_path,
+                    )
+                    self.generated_files.append(file_info)
+                    yield _sse("file_generated", file_info)
+                    return (
+                        f"Tracking sea route map generated: {unique_tracks} tracking number(s), "
+                        f"{unique_stops} unique stop(s)."
+                    )
+                except Exception as exc:
+                    error_msg = f"Tracking sea route map error: {exc}"
                     logger.exception(error_msg)
                     yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
                     return error_msg

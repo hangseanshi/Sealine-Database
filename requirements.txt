@@ -5,6 +5,9 @@ python-dotenv
 
 # Azure OpenAI SDK
 openai
+
+# Sea route computation
+searoute
 httpx
 
 # Database

@@ -1416,6 +1416,270 @@ legendCtrl.addTo(map);
     return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
 
 
+def _plot_tracking_searoute_map(
+    title: str,
+    data: dict[str, Any],
+    file_id: str,
+    title_slug: str,
+    file_store_path: str,
+) -> dict[str, Any]:
+    """Generate a Leaflet.js tracking sea-route map as a self-contained HTML file.
+
+    Same as _plot_tracking_route_map but draws realistic maritime routes using
+    pre-computed searoute polyline coordinates instead of Bezier arc lines.
+    Each route in data["routes"] must include a "sea_legs" key with polyline coords.
+    """
+    import json as _json
+    import html as _html
+
+    _SEAROUTE_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>|||TITLE|||</title>
+<script>
+window.onerror=function(m,s,l,c,e){
+  var el=document.getElementById('map-error');
+  if(el){el.style.display='block';el.innerHTML='<b>JS Error:</b> '+m+' (line '+l+')';}
+  return false;
+};
+</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body, #map { margin: 0; padding: 0; width: 100%; height: 100vh; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .map-title {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 1000; background: rgba(255,255,255,0.95);
+    padding: 7px 20px; border-radius: 8px;
+    font-size: 15px; font-weight: 700; color: #1F4788;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+    white-space: nowrap; pointer-events: none;
+  }
+  .legend {
+    background: rgba(255,255,255,0.97); padding: 10px 14px;
+    border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+    font-size: 12px; line-height: 1.7; max-height: 300px; overflow-y: auto; min-width: 120px;
+  }
+  .legend h4 { margin: 0 0 6px 0; font-size: 13px; color: #1F4788; }
+  .legend-item { display: flex; align-items: center; gap: 7px; padding: 1px 4px; border-radius: 3px; cursor: pointer; }
+  .legend-item:hover { background: #f0f4ff; }
+  .legend-item.active { background: #dce8ff; font-weight: 700; box-shadow: inset 0 0 0 1.5px #4a7fd4; }
+  .leg-line { width: 22px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+  .leg-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.8); flex-shrink: 0; }
+  .route-tooltip { background: rgba(255,255,255,0.97); border: 1px solid #ccc; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .stop-label {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 10px;
+    font-weight: 600;
+    color: #1F4788;
+    white-space: nowrap;
+  }
+  #map-error {
+    display: none; position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+    z-index: 9999; background: #fff3cd; border: 1px solid #ffc107;
+    padding: 10px 16px; border-radius: 6px; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="map-title">|||TITLE|||</div>
+<div id="map-error"></div>
+<script>
+try {
+var ROUTE_DATA = |||ROUTE_DATA_JSON|||;
+
+var map = L.map('map', {preferCanvas: true, worldCopyJump: false}).setView([20, 0], 2);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd',
+  maxZoom: 19,
+  noWrap: false,
+}).addTo(map);
+
+// ── Popup builder ──────────────────────────────────────────────────────────
+function buildPopup(loc) {
+  var lineCount = 1;
+  loc.tracks.forEach(function(t) { lineCount += 1 + t.events.length; });
+  var maxH = lineCount > 10 ? '210px' : 'none';
+  var overflow = lineCount > 10 ? 'auto' : 'visible';
+  var html = '<div style="max-height:' + maxH + ';overflow-y:' + overflow + ';min-width:220px;font-size:12px;line-height:1.6;">';
+  html += '<div style="font-weight:700;font-size:13px;color:#1F4788;margin-bottom:4px;border-bottom:1px solid #ddd;padding-bottom:4px;">' + loc.name + '</div>';
+  loc.tracks.forEach(function(t) {
+    html += '<div style="margin-top:3px;"><b>' + t.trk + '</b> <span style="color:#888;">(' + t.routeType + ')</span></div>';
+    t.events.forEach(function(ev) { html += '<div style="padding-left:12px;color:#555;">' + ev + '</div>'; });
+  });
+  html += '</div>';
+  return html;
+}
+
+// ── Tooltip for route line ────────────────────────────────────────────────
+function buildLineTooltip(route, fromLoc, toLoc) {
+  var html = '<div style="min-width:180px;font-size:12px;line-height:1.6;">';
+  html += '<div style="font-weight:700;color:' + route.color + ';">' + route.trk;
+  if (route.noOfContainers) html += ' (' + route.noOfContainers + ' Container' + (route.noOfContainers > 1 ? 's' : '') + ')';
+  html += '</div>';
+  html += '<div style="margin-top:2px;"><b>From:</b> ' + fromLoc.name + '</div>';
+  html += '<div><b>To:</b> ' + toLoc.name + '</div>';
+  html += '</div>';
+  return html;
+}
+
+// ── Check for estimated events ────────────────────────────────────────────
+function hasEstimatedEvent(loc, trkName) {
+  for (var ti = 0; ti < loc.tracks.length; ti++) {
+    if (loc.tracks[ti].trk !== trkName) continue;
+    for (var ei = 0; ei < loc.tracks[ti].events.length; ei++) {
+      if (loc.tracks[ti].events[ei].indexOf('(E)') >= 0) return true;
+    }
+  }
+  return false;
+}
+
+// ── Draw sea route polylines with arrow markers ──────────────────────────
+function drawSeaRouteLine(legPoints, color, tooltipHtml, dotted) {
+  var latlngs = legPoints.map(function(p) { return [p.lat, p.lon]; });
+  var opts = {color: color, weight: 3, opacity: 0.85};
+  if (dotted) opts.dashArray = '6,6';
+  var line = L.polyline(latlngs, opts).addTo(map);
+  if (tooltipHtml) line.bindTooltip(tooltipHtml, {sticky: true, className: 'route-tooltip'});
+
+  // Place arrow markers at 25%, 50%, 75% along the polyline
+  var arrows = [];
+  var totalPts = latlngs.length;
+  if (totalPts < 2) return {line: line, arrows: arrows};
+
+  [0.25, 0.50, 0.75].forEach(function(frac) {
+    var idx = Math.floor(frac * (totalPts - 1));
+    var nextIdx = Math.min(idx + 1, totalPts - 1);
+    if (idx === nextIdx) return;
+    var pt = latlngs[idx];
+    var ptNext = latlngs[nextIdx];
+    var angle = Math.atan2(ptNext[1] - pt[1], ptNext[0] - pt[0]) * 180 / Math.PI;
+    var svg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+      + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
+      + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
+    arrows.push(L.marker(pt, {
+      icon: L.divIcon({html: svg, className: '', iconSize: [16, 16], iconAnchor: [8, 8]}),
+      interactive: false, zIndexOffset: 100
+    }).addTo(map));
+  });
+  return {line: line, arrows: arrows};
+}
+
+// ── Draw routes using sea route polylines ────────────────────────────────
+var routeLayers = {};
+ROUTE_DATA.routes.forEach(function(route) {
+  routeLayers[route.trk] = {lines: [], arrows: [], markerIdxs: []};
+  var seaLegs = route.sea_legs || [];
+  for (var i = 0; i < route.stops.length - 1; i++) {
+    var fi = route.stops[i], ti = route.stops[i+1];
+    var fromLoc = ROUTE_DATA.locations[fi], toLoc = ROUTE_DATA.locations[ti];
+    var tip = buildLineTooltip(route, fromLoc, toLoc);
+    var dotted = hasEstimatedEvent(toLoc, route.trk);
+    var legPoints = seaLegs[i] || [{lat: fromLoc.lat, lon: fromLoc.lon}, {lat: toLoc.lat, lon: toLoc.lon}];
+    var _r = drawSeaRouteLine(legPoints, route.color, tip, dotted);
+    if (_r && _r.line) routeLayers[route.trk].lines.push(_r.line);
+    if (_r && _r.arrows) _r.arrows.forEach(function(a) { routeLayers[route.trk].arrows.push(a); });
+  }
+  route.stops.forEach(function(idx) { routeLayers[route.trk].markerIdxs.push(idx); });
+});
+
+// ── Draw location dots ──────────────────────────────────────────────────
+var locationMarkers = [];
+ROUTE_DATA.locations.forEach(function(loc, idx) {
+  var marker = L.circleMarker([loc.lat, loc.lon], {
+    radius: 7, color: '#ffffff', weight: 2,
+    fillColor: '#2c3e50', fillOpacity: 0.9
+  }).addTo(map);
+  marker.bindPopup(buildPopup(loc), {maxWidth: 420});
+  marker.bindTooltip(loc.name, {permanent: true, className: 'stop-label', direction: 'top', offset: [0, -8]});
+  locationMarkers.push(marker);
+});
+
+// ── Fit bounds ──────────────────────────────────────────────────────────
+var allCoords = ROUTE_DATA.locations.map(function(l) { return [l.lat, l.lon]; });
+if (allCoords.length > 0) {
+  try { map.fitBounds(L.latLngBounds(allCoords), {padding: [60, 60], maxZoom: 10}); } catch(e) {}
+}
+
+// ── Legend with click highlight ─────────────────────────────────────────
+var legendCtrl = L.control({position: 'bottomright'});
+legendCtrl.onAdd = function() {
+  var div = L.DomUtil.create('div', 'legend');
+  var html = '<h4 style="color:#C0392B;">Legend</h4>';
+  ROUTE_DATA.routes.forEach(function(r) {
+    html += '<div class="legend-item" data-trk="' + r.trk + '">'
+      + '<span class="leg-dot" style="background:' + r.color + ';"></span>'
+      + '<span class="leg-line" style="background:' + r.color + ';"></span> '
+      + r.trk + '</div>';
+  });
+  div.innerHTML = html;
+  // Click to highlight / dim routes
+  div.querySelectorAll('.legend-item[data-trk]').forEach(function(el) {
+    el.addEventListener('click', function() {
+      var trk = el.getAttribute('data-trk');
+      var isActive = el.classList.contains('active');
+      // Clear all active states
+      div.querySelectorAll('.legend-item').forEach(function(x) { x.classList.remove('active'); });
+      if (isActive) {
+        // Deselect: show all routes at full opacity
+        Object.keys(routeLayers).forEach(function(k) {
+          var rl = routeLayers[k];
+          rl.lines.forEach(function(l) { l.setStyle({opacity: 0.85}); });
+          if (rl.arrows) rl.arrows.forEach(function(a) { a.setOpacity(1.0); });
+        });
+        locationMarkers.forEach(function(m) { m.setStyle({fillOpacity: 0.9, opacity: 1}); });
+      } else {
+        el.classList.add('active');
+        // Dim all other routes, highlight the selected one
+        Object.keys(routeLayers).forEach(function(k) {
+          var rl = routeLayers[k];
+          var dimmed = (k !== trk);
+          rl.lines.forEach(function(l) { l.setStyle({opacity: dimmed ? 0.1 : 0.85}); });
+          if (rl.arrows) rl.arrows.forEach(function(a) { a.setOpacity(dimmed ? 0.1 : 1.0); });
+        });
+        // Dim unrelated markers
+        var activeIdxs = routeLayers[trk] ? routeLayers[trk].markerIdxs : [];
+        locationMarkers.forEach(function(m, idx) {
+          var related = activeIdxs.indexOf(idx) >= 0;
+          m.setStyle({fillOpacity: related ? 0.9 : 0.15, opacity: related ? 1 : 0.2});
+        });
+      }
+    });
+  });
+  return div;
+};
+legendCtrl.addTo(map);
+
+} catch(e) {
+  var errEl = document.getElementById('map-error');
+  if (errEl) { errEl.style.display = 'block'; errEl.innerHTML = '<b>Map Error:</b> ' + e.message; }
+}
+</script>
+</body>
+</html>
+"""
+
+    route_data_json = _json.dumps(data, ensure_ascii=False)
+    escaped_title = _html.escape(title)
+    html_content = (
+        _SEAROUTE_HTML
+        .replace("|||TITLE|||", escaped_title)
+        .replace("|||ROUTE_DATA_JSON|||", route_data_json)
+    )
+    full_path = f"{file_store_path}/{file_id}_{title_slug}.html"
+    with open(full_path, "w", encoding="utf-8") as fh:
+        fh.write(html_content)
+    return _file_meta(file_id, f"{title_slug}.html", "text/html", full_path)
+
+
 def _plot_location_bubble_map(
     title: str,
     locations: list[dict],
