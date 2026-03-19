@@ -150,7 +150,6 @@ def app(session_store, mock_config, file_store_dir):
     flask_app.config["SESSION_STORE"] = session_store
     flask_app.config["CONTEXT_TEXT"] = "Test context docs"
     flask_app.config["CONTEXT_FILES"] = ["test_doc.md"]
-    flask_app.config["ANTHROPIC_CLIENT"] = MagicMock()
     flask_app.config["FILE_STORE_PATH"] = file_store_dir
     flask_app.config["SEALINE_CONFIG"] = mock_config
 

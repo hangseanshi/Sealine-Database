@@ -80,10 +80,6 @@ class TestCreateAppViaFixture:
         """CONTEXT_FILES should be in app.config dict."""
         assert "CONTEXT_FILES" in app.config
 
-    def test_anthropic_client_in_config(self, app):
-        """ANTHROPIC_CLIENT should be in app.config dict."""
-        assert "ANTHROPIC_CLIENT" in app.config
-
     def test_file_store_path_in_config(self, app):
         """FILE_STORE_PATH should be in app.config dict."""
         assert "FILE_STORE_PATH" in app.config

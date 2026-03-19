@@ -2,7 +2,7 @@
 Flask application factory for Sealine Data Chat API.
 
 Creates the Flask app, registers route blueprints, initialises shared
-resources (session store, context loader, Anthropic client), and sets up
+resources (session store, context loader, OpenAI client), and sets up
 static file serving for the React frontend.
 
 Usage:
@@ -21,7 +21,7 @@ import tempfile
 
 from dotenv import load_dotenv
 
-# Load .env before anything reads os.environ (Anthropic client, config, etc.)
+# Load .env before anything reads os.environ (OpenAI client, config, etc.)
 # Use explicit path so it works regardless of cwd (e.g. preview servers).
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(_project_root, ".env"), override=True)
@@ -43,7 +43,7 @@ def create_app() -> Flask:
       - Configuration from environment variables
       - Session store (in-memory, with background cleanup)
       - Context loader (markdown files from memory/ directory)
-      - Anthropic API client (with SSL bypass)
+      - Azure OpenAI API client
       - Route blueprints (sessions, messages, files, health, teams)
       - Static file serving for React frontend
     """

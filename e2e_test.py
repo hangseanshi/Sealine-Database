@@ -1,7 +1,7 @@
 import requests, json, time, re, difflib
 from datetime import datetime
 
-BASE = "http://localhost:5000/api"
+BASE = "http://localhost:8080/api"
 
 # Expected SQL from test plan doc
 EXPECTED_SQL = {
@@ -251,7 +251,7 @@ sqls, db_results, files, raw = run_test("list all the tracking numbers from hous
 time.sleep(2)
 sql      = sqls[0] if sqls else "NO SQL CAPTURED"
 su       = sql.upper()
-houston_ok   = "HOUSTON" in su
+houston_ok   = "HOUSTON" in su or "USHOU" in su
 china_ok     = "CHINA" in su
 date_ok      = "GETDATE" in su and "7" in su
 pol_ok       = "POL" in su

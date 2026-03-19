@@ -38,7 +38,8 @@ def clean_env():
     """Provide a context manager that strips all Sealine-related env vars."""
     keys_to_strip = [
         "PORT", "HOST", "WORKERS",
-        "MODEL", "ANTHROPIC_API_KEY", "MAX_TOKENS",
+        "MODEL", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_API_VERSION", "MAX_TOKENS",
         "DB_SERVER", "DB_NAME", "DB_USER", "DB_PASSWORD",
         "SESSION_TTL_HOURS", "FILE_TTL_HOURS",
         "MEMORY_DIR", "SYSTEM_PROMPT",
@@ -78,11 +79,11 @@ class TestConfigDefaults:
 
     def test_model_default(self, clean_env):
         cfg = Config()
-        assert cfg.MODEL == "claude-haiku-4-5"
+        assert cfg.MODEL == "gpt-4o-03252025"
 
-    def test_anthropic_api_key_default(self, clean_env):
+    def test_azure_openai_api_key_default(self, clean_env):
         cfg = Config()
-        assert cfg.ANTHROPIC_API_KEY == ""
+        assert cfg.AZURE_OPENAI_API_KEY == ""
 
     def test_max_tokens_default(self, clean_env):
         cfg = Config()
@@ -118,7 +119,6 @@ class TestConfigDefaults:
 
     def test_system_prompt_default(self, clean_env):
         cfg = Config()
-        assert "Claude" in cfg.SYSTEM_PROMPT
         assert "Sealine" in cfg.SYSTEM_PROMPT
 
 
@@ -146,14 +146,14 @@ class TestConfigEnvOverrides:
             assert cfg.WORKERS == 4
 
     def test_model_override(self, clean_env):
-        with patch.dict(os.environ, {"MODEL": "claude-sonnet-4-20250514"}):
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT": "gpt-4o-custom"}):
             cfg = Config()
-            assert cfg.MODEL == "claude-sonnet-4-20250514"
+            assert cfg.MODEL == "gpt-4o-custom"
 
-    def test_anthropic_api_key_override(self, clean_env):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
+    def test_azure_openai_api_key_override(self, clean_env):
+        with patch.dict(os.environ, {"AZURE_OPENAI_API_KEY": "test-key-123"}):
             cfg = Config()
-            assert cfg.ANTHROPIC_API_KEY == "sk-test-key"
+            assert cfg.AZURE_OPENAI_API_KEY == "test-key-123"
 
     def test_max_tokens_override(self, clean_env):
         with patch.dict(os.environ, {"MAX_TOKENS": "4096"}):

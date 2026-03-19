@@ -35,19 +35,30 @@ import numpy as np  # noqa: E402
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Tool definitions (JSON schemas passed to Claude API)
+# Tool definitions (OpenAI function-calling format)
 # ---------------------------------------------------------------------------
 
-GENERATE_PLOT_TOOL: dict[str, Any] = {
-    "name": "generate_plot",
-    "description": (
+def _to_openai_tool(name: str, description: str, input_schema: dict) -> dict:
+    """Wrap a tool definition in OpenAI function-calling format."""
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": input_schema,
+        },
+    }
+
+GENERATE_PLOT_TOOL: dict[str, Any] = _to_openai_tool(
+    "generate_plot",
+    (
         "Generate a chart or plot from data. Supports bar, bar_stacked (grouped series), line, scatter, pie, "
         "heatmap, histogram, and map (interactive geographic map with OpenStreetMap "
         "tiles) chart types. ALWAYS use plot_type='map' with interactive=true when "
         "displaying geographic/location data with latitude and longitude coordinates. "
         "Use matplotlib for static charts or Leaflet.js for interactive maps / Plotly for interactive charts."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "plot_type": {
@@ -118,15 +129,15 @@ GENERATE_PLOT_TOOL: dict[str, Any] = {
         },
         "required": ["plot_type", "title", "data"],
     },
-}
+)
 
-GENERATE_PDF_TOOL: dict[str, Any] = {
-    "name": "generate_pdf",
-    "description": (
+GENERATE_PDF_TOOL: dict[str, Any] = _to_openai_tool(
+    "generate_pdf",
+    (
         "Generate a PDF report with a title, optional summary, and data table. "
         "Use when user asks for PDF or downloadable report."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "title": {"type": "string"},
@@ -146,20 +157,20 @@ GENERATE_PDF_TOOL: dict[str, Any] = {
         },
         "required": ["title", "columns", "rows"],
     },
-}
+)
 
-GENERATE_EXCEL_TOOL: dict[str, Any] = {
-    "name": "generate_excel",
-    "description": (
+GENERATE_EXCEL_TOOL: dict[str, Any] = _to_openai_tool(
+    "generate_excel",
+    (
         "Generate a formatted Excel (.xlsx) report with blue header row "
         "(#1F4788), frozen top row, and auto-sized columns."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "title": {"type": "string", "description": "Sheet name."},
             "columns": {"type": "array", "items": {"type": "string"}},
-            "rows": {"type": "array", "items": {"type": "array", "items": {}}},
+            "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
             "filename": {
                 "type": "string",
                 "description": "Output filename without extension.",
@@ -167,11 +178,11 @@ GENERATE_EXCEL_TOOL: dict[str, Any] = {
         },
         "required": ["title", "columns", "rows"],
     },
-}
+)
 
-GENERATE_WORD_LABEL_TOOL: dict[str, Any] = {
-    "name": "generate_word_label",
-    "description": (
+GENERATE_WORD_LABEL_TOOL: dict[str, Any] = _to_openai_tool(
+    "generate_word_label",
+    (
         "Generate a Word (.docx) shipping label document showing container events "
         "grouped by location. Each location is a bold/underlined header formatted as "
         "'LocationName/CountryCode (LOCode)'. Under each location, containers are "
@@ -179,7 +190,7 @@ GENERATE_WORD_LABEL_TOOL: dict[str, Any] = {
         "Use when the user asks for a shipping label, container label, Word label, "
         "or a formatted document showing container events by location."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "filename": {
@@ -225,7 +236,7 @@ GENERATE_WORD_LABEL_TOOL: dict[str, Any] = {
         },
         "required": ["locations"],
     },
-}
+)
 
 FILE_TOOLS: list[dict[str, Any]] = [
     GENERATE_PLOT_TOOL,
@@ -1179,10 +1190,10 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
     var mAngle = Math.atan2(toPt[1]-fromPt[1], toPt[0]-fromPt[0]) * 180/Math.PI;
     [0.25, 0.50, 0.75].forEach(function(f) {
       var aLat = fromPt[0] + f*(toPt[0]-fromPt[0]), aLon = fromPt[1] + f*(toPt[1]-fromPt[1]);
-      var mSvg = '<svg width="8" height="8" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+      var mSvg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
         + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
         + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
-      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[8,8], iconAnchor:[4,4]}), interactive:false, zIndexOffset:100}).addTo(map));
+      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
     });
     return {line: _sl, arrows: arrows};
   }
@@ -1205,10 +1216,10 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
   [0.25, 0.50, 0.75].forEach(function(tf) {
     var arrPt = bzPt(tf), pa = bzPt(tf-0.02), pb = bzPt(tf+0.02);
     var angle = Math.atan2(pb[1]-pa[1], pb[0]-pa[0]) * 180/Math.PI;
-    var svg = '<svg width="8" height="8" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+    var svg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
       + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
       + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
-    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[8,8], iconAnchor:[4,4]}), interactive:false, zIndexOffset:100}).addTo(map));
+    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
   });
   return {line: _cl, arrows: arrows};
 }
@@ -2062,10 +2073,10 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
     var mAngle = Math.atan2(toPt[1]-fromPt[1], toPt[0]-fromPt[0]) * 180/Math.PI;
     [0.25, 0.50, 0.75].forEach(function(f) {
       var aLat = fromPt[0] + f*(toPt[0]-fromPt[0]), aLon = fromPt[1] + f*(toPt[1]-fromPt[1]);
-      var mSvg = '<svg width="8" height="8" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+      var mSvg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
         + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
         + ' transform="rotate(' + mAngle.toFixed(1) + ')"/></svg>';
-      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[8,8], iconAnchor:[4,4]}), interactive:false, zIndexOffset:100}).addTo(map));
+      arrows.push(L.marker([aLat, aLon], {icon: L.divIcon({html: mSvg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
     });
     return {line: _sl, arrows: arrows};
   }
@@ -2088,10 +2099,10 @@ function drawArrowLine(fromPt, toPt, color, laneOffset, tooltipHtml, dotted) {
   [0.25, 0.50, 0.75].forEach(function(tf) {
     var arrPt = bzPt(tf), pa = bzPt(tf-0.02), pb = bzPt(tf+0.02);
     var angle = Math.atan2(pb[1]-pa[1], pb[0]-pa[0]) * 180/Math.PI;
-    var svg = '<svg width="8" height="8" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
+    var svg = '<svg width="16" height="16" viewBox="-8 -8 16 16" xmlns="http://www.w3.org/2000/svg">'
       + '<polygon points="0,-6 5,3 0,0 -5,3" fill="' + color + '" opacity="0.95"'
       + ' transform="rotate(' + angle.toFixed(1) + ')"/></svg>';
-    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[8,8], iconAnchor:[4,4]}), interactive:false, zIndexOffset:100}).addTo(map));
+    arrows.push(L.marker([arrPt[0], arrPt[1]], {icon: L.divIcon({html:svg, className:'', iconSize:[16,16], iconAnchor:[8,8]}), interactive:false, zIndexOffset:100}).addTo(map));
   });
   return {line: _cl, arrows: arrows};
 }

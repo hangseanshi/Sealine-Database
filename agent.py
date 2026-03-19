@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-agent.py — Core Sealine Claude agent: ClaudeChat class and all tool implementations.
+agent.py — Core Sealine OpenAI agent: ClaudeChat class and all tool implementations.
 
 Provides multi-turn conversation, auto-loads Markdown (.md) files as cached
 context, and exposes tools: execute_sql, generate_route_map, create_excel,
 send_email. Imported by api.py (REST/web interface).
 
 Requirements:
-    pip install anthropic httpx pyodbc python-dotenv openpyxl geopy
+    pip install openai httpx pyodbc python-dotenv openpyxl geopy
     pip install google-auth google-auth-oauthlib google-api-python-client
-    Set ANTHROPIC_API_KEY environment variable or create .env file.
+    Set AZURE_OPENAI_API_KEY environment variable or create .env file.
 """
 
 import os
@@ -21,7 +21,7 @@ import tempfile
 import argparse
 import textwrap
 import httpx
-import anthropic
+from openai import AzureOpenAI, BadRequestError
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -818,16 +818,20 @@ new Chart(document.getElementById('chart'), cfg);
         return None, f"Chart generation failed: {e}"
 
 
-# ── Tool definition ────────────────────────────────────────────────────────────
-SQL_TOOL = {
-    "name": "execute_sql",
-    "description": (
+# ── Helper: convert to OpenAI function-calling format ─────────────────────────
+def _to_openai_tool(name: str, description: str, parameters: dict) -> dict:
+    return {"type": "function", "function": {"name": name, "description": description, "parameters": parameters}}
+
+# ── Tool definitions (OpenAI function-calling format) ────────────────────────
+SQL_TOOL = _to_openai_tool(
+    "execute_sql",
+    (
         "Execute a read-only SQL query against the Sealine searates database "
         "(SQL Server). Use this to answer questions with live data. "
         "Only SELECT and WITH (CTE) statements are allowed. "
         f"Results are capped at {MAX_ROWS} rows."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "query": {
@@ -836,19 +840,18 @@ SQL_TOOL = {
             }
         },
         "required": ["query"]
-    }
-}
+    },
+)
 
-
-GENERATE_MAP_TOOL = {
-    "name": "generate_route_map",
-    "description": (
+GENERATE_MAP_TOOL = _to_openai_tool(
+    "generate_route_map",
+    (
         "Generate an interactive Leaflet.js HTML map for a specific tracking number's container route. "
         "Queries the database for all container events, plots each container's route with coloured "
         "polylines and clickable markers, and returns a /files/ URL you can embed in the chat. "
         "Use this whenever the user asks to 'show the route on a map' or 'visualise the route'."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "track_number": {
@@ -857,36 +860,36 @@ GENERATE_MAP_TOOL = {
             }
         },
         "required": ["track_number"]
-    }
-}
+    },
+)
 
-CREATE_EXCEL_TOOL = {
-    "name": "create_excel",
-    "description": (
+CREATE_EXCEL_TOOL = _to_openai_tool(
+    "create_excel",
+    (
         "Create an Excel (.xlsx) file from tabular data and return the file path. "
         "Use this when the user asks for an Excel file or wants to email results as a spreadsheet. "
         "After calling this, call send_email to deliver the file."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "title":    {"type": "string",  "description": "Sheet title (e.g. 'IN_TRANSIT Report')"},
             "columns":  {"type": "array",   "items": {"type": "string"}, "description": "Column header names"},
-            "rows":     {"type": "array",   "items": {"type": "array"},  "description": "Array of data rows (each row is an array of values matching columns)"},
+            "rows":     {"type": "array",   "items": {"type": "array", "items": {"type": "string"}},  "description": "Array of data rows (each row is an array of values matching columns)"},
             "filename": {"type": "string",  "description": "Output filename without extension (e.g. 'intransit_report')"},
         },
         "required": ["title", "columns", "rows", "filename"]
-    }
-}
+    },
+)
 
-SEND_EMAIL_TOOL = {
-    "name": "send_email",
-    "description": (
+SEND_EMAIL_TOOL = _to_openai_tool(
+    "send_email",
+    (
         "Send an email via Gmail, optionally with a file attachment (e.g. an Excel file). "
         "Use attachment_path from a previous create_excel call to send results as a spreadsheet. "
         "Default recipient is hangseanshi@gmail.com unless the user specifies otherwise."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "to":              {"type": "string", "description": "Recipient email address"},
@@ -895,12 +898,12 @@ SEND_EMAIL_TOOL = {
             "attachment_path": {"type": "string", "description": "Full file path to attach (optional — from create_excel)"},
         },
         "required": ["to", "subject", "body"]
-    }
-}
+    },
+)
 
-GENERATE_LOCATION_MAP_TOOL = {
-    "name": "generate_location_map",
-    "description": (
+GENERATE_LOCATION_MAP_TOOL = _to_openai_tool(
+    "generate_location_map",
+    (
         "Generate an interactive Leaflet.js HTML map that plots a set of locations as pin markers. "
         "Use this when the user wants to see WHERE multiple containers or shipments currently ARE on a map — "
         "e.g. 'show current locations', 'plot containers on a map', 'show ETA arrivals on a map'. "
@@ -908,7 +911,7 @@ GENERATE_LOCATION_MAP_TOOL = {
         "Each marker needs lat, lng, label and an optional popup (HTML allowed) and color. "
         "Returns a /files/ URL — include it as a markdown link [View Map](url) so it embeds as an iframe."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "title":    {"type": "string", "description": "Map title shown in the header bar"},
@@ -930,18 +933,18 @@ GENERATE_LOCATION_MAP_TOOL = {
             "filename": {"type": "string", "description": "Output filename without extension (e.g. 'eta_locations')"},
         },
         "required": ["title", "markers", "filename"]
-    }
-}
+    },
+)
 
-GENERATE_CHART_TOOL = {
-    "name": "generate_chart",
-    "description": (
+GENERATE_CHART_TOOL = _to_openai_tool(
+    "generate_chart",
+    (
         "Generate an interactive Chart.js HTML chart and return a /files/ URL for embedding. "
         "Supports bar, line, pie, doughnut, and horizontalBar chart types. "
         "Use this whenever the user asks to visualise data as a chart or graph. "
         "IMPORTANT: include the returned URL as a markdown link [View Chart](url) so it renders as an embedded iframe."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "title":      {"type": "string", "description": "Chart title shown at the top"},
@@ -972,8 +975,8 @@ GENERATE_CHART_TOOL = {
             "y_label":    {"type": "string", "description": "Y-axis label (optional, not used for pie/doughnut)"},
         },
         "required": ["title", "chart_type", "labels", "datasets", "filename"]
-    }
-}
+    },
+)
 
 
 # ── Markdown loader ────────────────────────────────────────────────────────────
@@ -999,7 +1002,7 @@ def load_md_files(search_root: str) -> tuple[str, list[str]]:
 def make_banner() -> str:
     return f"""
   {c('╔══════════════════════════════════════════╗', CYAN, BOLD)}
-  {c('║', CYAN, BOLD)}  {c('Claude for Desktop  (terminal edition)', BOLD)}  {c('║', CYAN, BOLD)}
+  {c('║', CYAN, BOLD)}  {c('Sealine GPT  (terminal edition)       ', BOLD)}  {c('║', CYAN, BOLD)}
   {c('╚══════════════════════════════════════════╝', CYAN, BOLD)}
 
   {c('Commands:', DIM)}
@@ -1018,16 +1021,20 @@ def make_banner() -> str:
 class ClaudeChat:
     def __init__(
         self,
-        model: str = "claude-haiku-4-5",
-        base_system: str = "You are Claude, a helpful AI assistant made by Anthropic.",
+        model: str | None = None,
+        base_system: str = "You are a helpful AI assistant and data analyst for the Sealine shipping database.",
         max_tokens: int = 8192,
         docs_text: str = "",
         docs_files: list[str] | None = None,
         db_enabled: bool = True,
     ):
-        self.client = anthropic.Anthropic(
-            http_client=httpx.Client(verify=False)
+        self.client = AzureOpenAI(
+            azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT", "https://ve-azure-openai.openai.azure.com"),
+            api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
+            api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
         )
+        if model is None:
+            model = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-03252025")
         self.model = model
         self.base_system = base_system
         self.max_tokens = max_tokens
@@ -1042,8 +1049,8 @@ class ClaudeChat:
         self.email_calls = 0
         self.excel_calls = 0
 
-    # ── System blocks ──────────────────────────────────────────────────────────
-    def _system_blocks(self) -> list[dict] | str:
+    # ── System prompt ──────────────────────────────────────────────────────────
+    def _system_prompt(self) -> str:
         db_note = (
             "\n\nYou have access to the `execute_sql` tool which runs live queries "
             "against the Sealine searates SQL Server database. Use it whenever the "
@@ -1071,23 +1078,15 @@ class ClaudeChat:
         )
         base = self.base_system + db_note
 
-        if not self.docs_text:
-            return base
-
-        return [
-            {"type": "text", "text": base},
-            {
-                "type": "text",
-                "text": (
-                    "# Sealine-Database Reference Documents\n\n"
-                    "The following Markdown files have been loaded from the repository. "
-                    "Use them as your primary reference for schema, relationships, "
-                    "connection details, and saved reports.\n\n"
-                    + self.docs_text
-                ),
-                "cache_control": {"type": "ephemeral"},
-            },
-        ]
+        if self.docs_text:
+            base += (
+                "\n\n# Sealine-Database Reference Documents\n\n"
+                "The following Markdown files have been loaded from the repository. "
+                "Use them as your primary reference for schema, relationships, "
+                "connection details, and saved reports.\n\n"
+                + self.docs_text
+            )
+        return base
 
     # ── Tool executor ──────────────────────────────────────────────────────────
     def _execute_tool(self, name: str, tool_input: dict) -> str:
@@ -1171,41 +1170,51 @@ class ClaudeChat:
         tools = ([SQL_TOOL] if self.db_enabled else []) + [GENERATE_MAP_TOOL, GENERATE_LOCATION_MAP_TOOL, CREATE_EXCEL_TOOL, SEND_EMAIL_TOOL, GENERATE_CHART_TOOL]
 
         while True:
-            response = self.client.messages.create(
+            openai_messages = [{"role": "system", "content": self._system_prompt()}] + self.messages
+
+            response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                system=self._system_blocks(),
-                tools=tools,
-                messages=self.messages,
+                messages=openai_messages,
+                tools=tools if tools else None,
             )
 
-            self.total_input_tokens  += response.usage.input_tokens
-            self.total_output_tokens += response.usage.output_tokens
-            cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
-            if cache_read:
-                self.cache_hits += 1
+            usage = response.usage
+            if usage:
+                self.total_input_tokens  += usage.prompt_tokens or 0
+                self.total_output_tokens += usage.completion_tokens or 0
 
-            self.messages.append({"role": "assistant", "content": response.content})
+            choice = response.choices[0]
+            msg = choice.message
 
-            if response.stop_reason == "tool_use":
-                tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use":
-                        result_text = self._execute_tool_silent(block.name, block.input)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_text,
-                        })
-                self.messages.append({"role": "user", "content": tool_results})
+            # Build assistant message for history
+            assistant_msg: dict = {"role": "assistant", "content": msg.content}
+            if msg.tool_calls:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ]
+            self.messages.append(assistant_msg)
+
+            if choice.finish_reason == "tool_calls" and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tool_input = json.loads(tc.function.arguments)
+                    result_text = self._execute_tool_silent(tc.function.name, tool_input)
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result_text,
+                    })
                 continue
 
-            # Extract text from response
-            parts = []
-            for block in response.content:
-                if block.type == "text":
-                    parts.append(block.text)
-            return "\n".join(parts)
+            return msg.content or ""
 
     def _execute_tool_silent(self, name: str, tool_input: dict) -> str:
         """Execute tool without terminal output (for API use)."""
@@ -1273,75 +1282,92 @@ class ClaudeChat:
     # ── Send (agentic loop with streaming) ────────────────────────────────────
     def send(self, user_text: str) -> None:
         self.messages.append({"role": "user", "content": user_text})
-        print(f"\n{c('Claude', CYAN, BOLD)}  ", end="", flush=True)
+        print(f"\n{c('GPT', CYAN, BOLD)}  ", end="", flush=True)
 
         tools = ([SQL_TOOL] if self.db_enabled else []) + [GENERATE_MAP_TOOL, GENERATE_LOCATION_MAP_TOOL, CREATE_EXCEL_TOOL, SEND_EMAIL_TOOL, GENERATE_CHART_TOOL]
 
         while True:
             collected: list[str] = []
 
-            # Stream one API call
-            try:
-                with self.client.messages.stream(
-                    model=self.model,
-                    max_tokens=self.max_tokens,
-                    system=self._system_blocks(),
-                    tools=tools,
-                    messages=self.messages,
-                ) as stream:
-                    for event in stream:
-                        if event.type == "content_block_start":
-                            if event.content_block.type == "thinking":
-                                print(c("\n[thinking…]", DIM, MAGENTA), flush=True)
-                            elif event.content_block.type == "tool_use":
-                                # tool name shown after we get the full input
-                                pass
-                        elif event.type == "content_block_delta":
-                            if event.delta.type == "text_delta":
-                                print(event.delta.text, end="", flush=True)
-                                collected.append(event.delta.text)
-                    final = stream.get_final_message()
+            openai_messages = [{"role": "system", "content": self._system_prompt()}] + self.messages
 
-            except anthropic.BadRequestError:
-                # Haiku/older model — no thinking support, retry without it
-                with self.client.messages.stream(
-                    model=self.model,
-                    max_tokens=self.max_tokens,
-                    system=self._system_blocks(),
-                    tools=tools,
-                    messages=self.messages,
-                ) as stream:
-                    for text in stream.text_stream:
-                        print(text, end="", flush=True)
-                        collected.append(text)
-                    final = stream.get_final_message()
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                messages=openai_messages,
+                tools=tools if tools else None,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
 
-            self.total_input_tokens  += final.usage.input_tokens
-            self.total_output_tokens += final.usage.output_tokens
-            cache_read = getattr(final.usage, "cache_read_input_tokens", 0) or 0
-            if cache_read:
-                self.cache_hits += 1
+            collected_text = ""
+            tool_calls_by_index: dict[int, dict] = {}
+            finish_reason = None
+            usage_prompt = 0
+            usage_completion = 0
 
-            # Append assistant turn (full content list, preserves tool_use blocks)
-            self.messages.append({"role": "assistant", "content": final.content})
+            for chunk in stream:
+                if chunk.usage:
+                    usage_prompt = chunk.usage.prompt_tokens or 0
+                    usage_completion = chunk.usage.completion_tokens or 0
 
-            # ── Check if Claude wants to use a tool ───────────────────────────
-            if final.stop_reason == "tool_use":
-                tool_results = []
-                for block in final.content:
-                    if block.type == "tool_use":
-                        result_text = self._execute_tool(block.name, block.input)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_text,
-                        })
-                # Feed results back and loop
-                self.messages.append({"role": "user", "content": tool_results})
-                print(f"\n{c('Claude', CYAN, BOLD)}  ", end="", flush=True)
+                if not chunk.choices:
+                    continue
+
+                choice = chunk.choices[0]
+                finish_reason = choice.finish_reason or finish_reason
+                delta = choice.delta
+
+                if delta and delta.content:
+                    print(delta.content, end="", flush=True)
+                    collected_text += delta.content
+
+                if delta and delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls_by_index:
+                            tool_calls_by_index[idx] = {"id": tc.id or "", "name": "", "arguments": ""}
+                        entry = tool_calls_by_index[idx]
+                        if tc.id:
+                            entry["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            entry["name"] = tc.function.name
+                        if tc.function and tc.function.arguments:
+                            entry["arguments"] += tc.function.arguments
+
+            self.total_input_tokens += usage_prompt
+            self.total_output_tokens += usage_completion
+
+            # Build assistant message for history
+            assistant_msg: dict = {"role": "assistant", "content": collected_text or None}
+            if tool_calls_by_index:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                    }
+                    for tc in sorted(tool_calls_by_index.values(), key=lambda x: x["id"])
+                ]
+            self.messages.append(assistant_msg)
+
+            # ── Check if model wants to use a tool ───────────────────────────
+            if finish_reason == "tool_calls" and tool_calls_by_index:
+                for tc in sorted(tool_calls_by_index.values(), key=lambda x: x["id"]):
+                    try:
+                        tool_input = json.loads(tc["arguments"])
+                    except json.JSONDecodeError:
+                        tool_input = {}
+                    result_text = self._execute_tool(tc["name"], tool_input)
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result_text,
+                    })
+                print(f"\n{c('GPT', CYAN, BOLD)}  ", end="", flush=True)
                 continue
 
-            # ── end_turn: done ────────────────────────────────────────────────
+            # ── stop: done ────────────────────────────────────────────────
             break
 
         print("\n")
@@ -1411,10 +1437,10 @@ def main() -> None:
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     parser = argparse.ArgumentParser(
-        description="Terminal chat interface for Claude with live Sealine DB access"
+        description="Terminal chat interface for OpenAI with live Sealine DB access"
     )
-    parser.add_argument("--model", default="claude-haiku-4-5",
-                        help="Model ID (default: claude-haiku-4-5)")
+    parser.add_argument("--model", default=None,
+                        help="Azure OpenAI deployment name (default: from AZURE_OPENAI_DEPLOYMENT env)")
     parser.add_argument("--system",
                         default="You are Claude, a helpful AI assistant and data analyst "
                                 "for the Sealine shipping database. You have been given "
@@ -1430,8 +1456,8 @@ def main() -> None:
                         help="Disable live SQL database tool")
     args = parser.parse_args()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print(c("Error: ANTHROPIC_API_KEY environment variable is not set.", RED, BOLD))
+    if not os.environ.get("AZURE_OPENAI_API_KEY"):
+        print(c("Error: AZURE_OPENAI_API_KEY environment variable is not set.", RED, BOLD))
         sys.exit(1)
 
     docs_text, docs_files = "", []
@@ -1505,14 +1531,8 @@ def main() -> None:
 
         try:
             chat.send(text)
-        except anthropic.AuthenticationError:
-            print(c("\n  Error: Invalid API key. Check ANTHROPIC_API_KEY.\n", RED))
-        except anthropic.RateLimitError:
-            print(c("\n  Error: Rate limited. Please wait and try again.\n", RED))
-        except anthropic.APIConnectionError:
-            print(c("\n  Error: Network error. Check your internet connection.\n", RED))
-        except anthropic.APIStatusError as e:
-            print(c(f"\n  API error {e.status_code}: {e.message}\n", RED))
+        except Exception as e:
+            print(c(f"\n  Error: {e}\n", RED))
 
 
 if __name__ == "__main__":

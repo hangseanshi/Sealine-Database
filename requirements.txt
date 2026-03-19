@@ -3,8 +3,8 @@ fastapi
 uvicorn[standard]
 python-dotenv
 
-# Anthropic Claude SDK
-anthropic
+# Azure OpenAI SDK
+openai
 httpx
 
 # Database

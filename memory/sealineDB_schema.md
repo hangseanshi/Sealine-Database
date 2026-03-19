@@ -3,6 +3,14 @@
 ## Connection
 See connections.md for credentials.
 
+## MANDATORY RULE: Soft-Delete Filtering
+The following tables use soft deletes via a `DeletedDt` column:
+**Sealine_Header**, **Sealine_Route**, **Sealine_Locations**, **Sealine_Container**, **Sealine_Container_Event**, **Sealine_Facilities**.
+
+**EVERY query that references any of these tables MUST include `<alias>.DeletedDt IS NULL` in the WHERE or JOIN condition for EACH table/alias used.** This is not optional — omitting it returns deleted/stale rows and produces wrong results.
+
+Example: if you write `FROM Sealine_Header h INNER JOIN Sealine_Route r ...`, you MUST include both `h.DeletedDt IS NULL` AND `r.DeletedDt IS NULL`.
+
 ## Relationships (logical, no FK constraints enforced in DB)
 
 ```

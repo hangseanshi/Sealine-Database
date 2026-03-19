@@ -1,5 +1,5 @@
 """
-api.py — FastAPI REST interface for the Sealine Claude agent.
+api.py — FastAPI REST interface for the Sealine OpenAI agent.
 
 Exposes the ClaudeChat agent (from agent.py) via HTTP endpoints,
 allowing users to create chat sessions and send prompts over a REST API.
@@ -34,17 +34,17 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # (explicit path ensures it works regardless of the process working directory)
 load_dotenv(os.path.join(SCRIPT_DIR, ".env"))
 
-DEFAULT_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5")
-DEFAULT_MAX_TOKENS = int(os.environ.get("CLAUDE_MAX_TOKENS", "8192"))
+DEFAULT_MODEL = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-03252025")
+DEFAULT_MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "8192"))
 DEFAULT_SYSTEM = os.environ.get(
-    "CLAUDE_SYSTEM_PROMPT",
-    "You are Claude, a helpful AI assistant and data analyst "
+    "SYSTEM_PROMPT",
+    "You are a helpful AI assistant and data analyst "
     "for the Sealine shipping database. You have been given "
     "the database schema and reference documents as context.",
 )
-DOCS_DIR = os.environ.get("CLAUDE_DOCS_DIR", SCRIPT_DIR)
-DISABLE_DB = os.environ.get("CLAUDE_DISABLE_DB", "").lower() in ("1", "true", "yes")
-DISABLE_DOCS = os.environ.get("CLAUDE_DISABLE_DOCS", "").lower() in ("1", "true", "yes")
+DOCS_DIR = os.environ.get("DOCS_DIR", SCRIPT_DIR)
+DISABLE_DB = os.environ.get("DISABLE_DB", "").lower() in ("1", "true", "yes")
+DISABLE_DOCS = os.environ.get("DISABLE_DOCS", "").lower() in ("1", "true", "yes")
 
 # ── Preload docs once at startup ──────────────────────────────────────────────
 docs_text, docs_files = ("", []) if DISABLE_DOCS else load_md_files(DOCS_DIR)
@@ -115,15 +115,15 @@ def _count_turns(chat: ClaudeChat) -> int:
 # ── App ───────────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise RuntimeError("ANTHROPIC_API_KEY environment variable is not set")
+    if not os.environ.get("AZURE_OPENAI_API_KEY"):
+        raise RuntimeError("AZURE_OPENAI_API_KEY environment variable is not set")
     yield
     sessions.clear()
 
 
 app = FastAPI(
-    title="Sealine Claude Agent API",
-    description="REST API for the Sealine database Claude agent",
+    title="Sealine OpenAI Agent API",
+    description="REST API for the Sealine database OpenAI agent",
     version="1.0.0",
     lifespan=lifespan,
 )

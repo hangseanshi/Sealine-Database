@@ -6,14 +6,15 @@ import remarkBreaks from 'remark-breaks';
 import CopyButton from './CopyButton';
 
 /**
- * Strip fenced code blocks (``` ... ```) from agent message text.
+ * Strip only SQL fenced code blocks (```sql ... ```) from agent message text.
  * SQL queries are already shown via the separate SqlBlock component,
  * so we don't want them duplicated inside the message bubble.
+ * Other code blocks (e.g. results, data listings) are preserved.
  */
 function stripCodeBlocks(text) {
   return text
-    // Remove fenced code blocks with optional language tag: ```lang\n...\n```
-    .replace(/```[\w]*\n[\s\S]*?```/g, '')
+    // Remove only SQL fenced code blocks: ```sql\n...\n```
+    .replace(/```sql\n[\s\S]*?```/gi, '')
     // Collapse runs of 3+ blank lines left behind into a single blank line
     .replace(/\n{3,}/g, '\n\n')
     .trim();

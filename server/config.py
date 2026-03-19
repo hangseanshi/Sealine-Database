@@ -19,9 +19,19 @@ class Config:
         self.HOST: str = os.environ.get("HOST", "0.0.0.0")
         self.WORKERS: int = int(os.environ.get("WORKERS", "2"))
 
-        # --- Anthropic Claude ---
-        self.MODEL: str = os.environ.get("MODEL", "claude-opus-4-6")
-        self.ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
+        # --- Azure OpenAI ---
+        self.AZURE_OPENAI_ENDPOINT: str = os.environ.get(
+            "AZURE_OPENAI_ENDPOINT",
+            "https://ve-azure-openai.openai.azure.com",
+        )
+        self.AZURE_OPENAI_API_KEY: str = os.environ.get("AZURE_OPENAI_API_KEY", "")
+        self.AZURE_OPENAI_DEPLOYMENT: str = os.environ.get(
+            "AZURE_OPENAI_DEPLOYMENT", "gpt-4o-03252025"
+        )
+        self.AZURE_OPENAI_API_VERSION: str = os.environ.get(
+            "AZURE_OPENAI_API_VERSION", "2024-10-21"
+        )
+        self.MODEL: str = self.AZURE_OPENAI_DEPLOYMENT
         self.MAX_TOKENS: int = int(os.environ.get("MAX_TOKENS", "8192"))
 
         # --- Database ---

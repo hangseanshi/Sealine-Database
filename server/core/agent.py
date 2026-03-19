@@ -1,13 +1,13 @@
 """
-Agent Core — Anthropic Claude-powered agentic loop for Sealine Data Chat.
+Agent Core — Azure OpenAI-powered agentic loop for Sealine Data Chat.
 
 The SSE event interface is identical — the frontend is unchanged.
 
 Key implementation details:
-  - Client: anthropic.Anthropic
-  - Tool definitions in Anthropic input_schema format (no conversion needed)
-  - Tool results sent as role:"user" content blocks with type:"tool_result"
-  - Streaming uses client.messages.stream() with text_stream + get_final_message()
+  - Client: openai.AzureOpenAI
+  - Tool definitions in OpenAI function-calling format
+  - Tool results sent as role:"tool" messages
+  - Streaming uses client.chat.completions.create(stream=True)
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Generator
 
 import ssl
 
-import anthropic
+from openai import AzureOpenAI, APIError, APIConnectionError, RateLimitError, AuthenticationError
 import httpx
 
 from server.config import get_config
@@ -44,18 +44,34 @@ MAX_TOOL_LOOPS = 15
 
 
 # ---------------------------------------------------------------------------
-#  Tool definitions (Anthropic input_schema format — converted on use)
+#  Helper: convert Anthropic-style tool defs to OpenAI function-calling format
 # ---------------------------------------------------------------------------
 
-SQL_TOOL = {
-    "name": "execute_sql",
-    "description": (
+def _to_openai_tool(name: str, description: str, input_schema: dict) -> dict:
+    """Wrap a tool definition in OpenAI function-calling format."""
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": input_schema,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+#  Tool definitions (OpenAI function-calling format)
+# ---------------------------------------------------------------------------
+
+SQL_TOOL = _to_openai_tool(
+    "execute_sql",
+    (
         "Execute a read-only SQL query against the Sealine searates database "
         "(SQL Server). Use this to answer questions with live data. "
         "Only SELECT and WITH (CTE) statements are allowed. "
         f"Results are capped at {MAX_ROWS} rows."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "query": {
@@ -65,15 +81,15 @@ SQL_TOOL = {
         },
         "required": ["query"],
     },
-}
+)
 
-_FALLBACK_PLOT_TOOL = {
-    "name": "generate_plot",
-    "description": (
+_FALLBACK_PLOT_TOOL = _to_openai_tool(
+    "generate_plot",
+    (
         "Generate a chart or plot from data. Supports bar, line, scatter, pie, "
         "heatmap, and histogram chart types."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "plot_type": {
@@ -94,12 +110,12 @@ _FALLBACK_PLOT_TOOL = {
         },
         "required": ["plot_type", "title", "data"],
     },
-}
+)
 
-_FALLBACK_PDF_TOOL = {
-    "name": "generate_pdf",
-    "description": "Generate a PDF report with a title, optional summary, and data table.",
-    "input_schema": {
+_FALLBACK_PDF_TOOL = _to_openai_tool(
+    "generate_pdf",
+    "Generate a PDF report with a title, optional summary, and data table.",
+    {
         "type": "object",
         "properties": {
             "title": {"type": "string"},
@@ -110,27 +126,27 @@ _FALLBACK_PDF_TOOL = {
         },
         "required": ["title", "columns", "rows"],
     },
-}
+)
 
-_FALLBACK_EXCEL_TOOL = {
-    "name": "generate_excel",
-    "description": "Generate a formatted Excel (.xlsx) report.",
-    "input_schema": {
+_FALLBACK_EXCEL_TOOL = _to_openai_tool(
+    "generate_excel",
+    "Generate a formatted Excel (.xlsx) report.",
+    {
         "type": "object",
         "properties": {
             "title": {"type": "string"},
             "columns": {"type": "array", "items": {"type": "string"}},
-            "rows": {"type": "array", "items": {"type": "array", "items": {}}},
+            "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
             "filename": {"type": "string"},
         },
         "required": ["title", "columns", "rows"],
     },
-}
+)
 
 
-TRACKING_ROUTES_TOOL = {
-    "name": "show_tracking_routes",
-    "description": (
+TRACKING_ROUTES_TOOL = _to_openai_tool(
+    "show_tracking_routes",
+    (
         "Generate an interactive route map for one or more tracking numbers. "
         "ONLY call this tool when the user asks for a route map and their message "
         "does NOT contain the word 'container' or 'containers'. "
@@ -140,7 +156,7 @@ TRACKING_ROUTES_TOOL = {
         "Supply either track_numbers (explicit list) OR subquery (a SQL SELECT that returns "
         "TrackNumber values) — not both."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "track_numbers": {
@@ -183,11 +199,11 @@ TRACKING_ROUTES_TOOL = {
             },
         },
     },
-}
+)
 
-CONTAINER_ROUTES_TOOL = {
-    "name": "show_container_routes",
-    "description": (
+CONTAINER_ROUTES_TOOL = _to_openai_tool(
+    "show_container_routes",
+    (
         "Generate an interactive container route map. "
         "ONLY call this tool when the user's message explicitly contains the word "
         "'container' or 'containers'. "
@@ -197,7 +213,7 @@ CONTAINER_ROUTES_TOOL = {
         "Supply explicit lists (track_numbers / container_numbers) OR subqueries "
         "(track_number_subquery / container_number_subquery) — not both kinds at once."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "track_numbers": {
@@ -257,12 +273,12 @@ CONTAINER_ROUTES_TOOL = {
             },
         },
     },
-}
+)
 
 
-LOCATION_BUBBLE_MAP_TOOL = {
-    "name": "show_location_map",
-    "description": (
+LOCATION_BUBBLE_MAP_TOOL = _to_openai_tool(
+    "show_location_map",
+    (
         "Display one or more locations as bubble markers on an interactive world map. "
         "Use when the user wants to highlight, pin, or mark specific cities, ports, "
         "or locations — WITHOUT showing shipping routes between them. "
@@ -270,7 +286,7 @@ LOCATION_BUBBLE_MAP_TOOL = {
         "(query Sealine_Locations for port lat/lng), then pass the results here. "
         "Bubbles can optionally be sized by a numeric value (e.g. container count per port)."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "title": {
@@ -304,12 +320,12 @@ LOCATION_BUBBLE_MAP_TOOL = {
         },
         "required": ["title", "locations"],
     },
-}
+)
 
 
-CHOROPLETH_MAP_TOOL = {
-    "name": "show_choropleth_map",
-    "description": (
+CHOROPLETH_MAP_TOOL = _to_openai_tool(
+    "show_choropleth_map",
+    (
         "Generate an interactive world choropleth map that shades countries by a numeric value "
         "(e.g. number of trackings, containers, or shipments per country). "
         "Use this tool when the user wants to visualise country-level data on a map "
@@ -317,7 +333,7 @@ CHOROPLETH_MAP_TOOL = {
         "The agent must first run execute_sql to get the country-value data, "
         "then pass the results to this tool."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "title": {
@@ -356,18 +372,18 @@ CHOROPLETH_MAP_TOOL = {
         },
         "required": ["title", "data"],
     },
-}
+)
 
 
-GEOCODE_LOCATION_TOOL = {
-    "name": "geocode_location",
-    "description": (
+GEOCODE_LOCATION_TOOL = _to_openai_tool(
+    "geocode_location",
+    (
         "Look up the coordinates (latitude, longitude) and display name of any "
         "place — city, port, country, address, or landmark — using OpenStreetMap Nominatim. "
         "Call this BEFORE show_location_map whenever the user asks to show a specific location "
         "on the map. Returns up to 3 candidate results with lat, lon, and display_name."
     ),
-    "input_schema": {
+    {
         "type": "object",
         "properties": {
             "query": {
@@ -380,7 +396,7 @@ GEOCODE_LOCATION_TOOL = {
         },
         "required": ["query"],
     },
-}
+)
 
 
 def _get_plot_tool_def() -> dict:
@@ -410,12 +426,12 @@ def _sse(event: str, data: dict) -> dict:
 
 class SealineAgent:
     """
-    Anthropic Claude-powered agent that yields SSE event dicts.
+    Azure OpenAI-powered agent that yields SSE event dicts.
     """
 
     def __init__(
         self,
-        model: str = "claude-haiku-4-5",
+        model: str = "gpt-4o-03252025",
         system_prompt: str = (
             "You are a helpful AI assistant and data analyst "
             "for the Sealine shipping database."
@@ -429,16 +445,10 @@ class SealineAgent:
         messages: list[dict] | None = None,
     ):
         cfg = get_config()
-        # Use a custom httpx client that disables SSL certificate revocation
-        # checks — required on Windows servers where CRL/OCSP endpoints may
-        # be unreachable (results in CRYPT_E_NO_REVOCATION_CHECK errors).
-        ssl_ctx = ssl.create_default_context()
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
-        http_client = httpx.Client(verify=False)
-        self.client = anthropic.Anthropic(
-            api_key=cfg.ANTHROPIC_API_KEY,
-            http_client=http_client,
+        self.client = AzureOpenAI(
+            azure_endpoint=cfg.AZURE_OPENAI_ENDPOINT,
+            api_key=cfg.AZURE_OPENAI_API_KEY,
+            api_version=cfg.AZURE_OPENAI_API_VERSION,
         )
         self.model = model
         self.system_prompt = system_prompt
@@ -468,7 +478,17 @@ class SealineAgent:
             tool_instructions.append(
                 "You have access to the `execute_sql` tool which runs live queries "
                 "against the Sealine searates SQL Server database. Use it whenever the "
-                "user asks for data, counts, reports, or anything requiring live results."
+                "user asks for data, counts, reports, or anything requiring live results.\n\n"
+                "CRITICAL SQL RULE — Soft-delete filtering (NEVER SKIP THIS):\n"
+                "The tables Sealine_Header, Sealine_Route, and Sealine_Locations use soft deletes via a DeletedDt column. "
+                "EVERY query MUST include `<alias>.DeletedDt IS NULL` for EVERY table alias used. "
+                "This is MANDATORY even if you also filter by Status or other fields.\n"
+                "Examples:\n"
+                "  - FROM Sealine_Header h → WHERE ... AND h.DeletedDt IS NULL\n"
+                "  - JOIN Sealine_Route r → AND r.DeletedDt IS NULL\n"
+                "  - JOIN Sealine_Locations l → AND l.DeletedDt IS NULL\n"
+                "If you forget h.DeletedDt IS NULL on Sealine_Header, your query WILL return wrong results. "
+                "ALWAYS include it, no exceptions."
             )
         tool_instructions.append(
             "You can generate charts with `generate_plot`, PDF reports with "
@@ -516,215 +536,6 @@ class SealineAgent:
         if name == "execute_sql":
             query = tool_input.get("query", "")
             yield _sse("tool_start", {"tool": "execute_sql", "query": query})
-
-            # CRITICAL: Validate query does not contain invalid SQL patterns
-            query_upper = query.upper()
-
-            # DEBUG: Write marker file to prove this code is running
-            try:
-                with open("/tmp/execute_sql_called.txt", "w") as f:
-                    f.write(f"execute_sql called\nhas POD: {'POD' in query_upper}\nhas STATUS: {'STATUS' in query_upper}\nhas <>: {'<>' in query_upper}\n")
-            except:
-                pass
-
-            # SIMPLE TEST: Reject any query with POD and Status filtering
-            if "POD" in query_upper and "STATUS" in query_upper and "<>" in query_upper:
-                error_msg = "🧪 TEST VALIDATION TRIGGERED: This query has POD + Status filtering which is suspicious."
-                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
-                return error_msg
-
-            # Check for invalid table alias references
-            import re as regex_module
-            from_match = regex_module.search(r'FROM\s+(\w+)\s+(\w+)', query_upper)
-            join_matches = regex_module.findall(r'(?:INNER\s+)?JOIN\s+(\w+)\s+(\w+)', query_upper)
-
-            defined_aliases = set()
-            if from_match:
-                defined_aliases.add(from_match.group(2))  # alias
-
-            for table, alias in join_matches:
-                defined_aliases.add(alias)
-
-            # Find all table.column references (e.g., t.TrackNumber, h.Status)
-            col_refs = regex_module.findall(r'\b([a-zA-Z_]\w*)\.\w+', query_upper)
-            undefined_aliases = set(col_refs) - defined_aliases
-
-            if undefined_aliases:
-                error_msg = (
-                    "❌ SQL SYNTAX ERROR: Invalid table alias reference(s): " + ", ".join(sorted(undefined_aliases)) + "\n\n"
-                    "These aliases are used in the query but are never defined in the FROM/JOIN clauses.\n\n"
-                    "Defined aliases: " + (", ".join(sorted(defined_aliases)) if defined_aliases else "NONE") + "\n\n"
-                    "Check your table alias mappings and ensure every reference (e.g., t.TrackNumber) "
-                    "has a corresponding table in the FROM clause (e.g., FROM table_name t)."
-                )
-                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
-                return error_msg
-
-            # Check for STRING_AGG(DISTINCT - invalid T-SQL
-            if "STRING_AGG(DISTINCT" in query_upper or "STRING_AGG (DISTINCT" in query_upper:
-                error_msg = (
-                    "❌ INVALID QUERY: STRING_AGG(DISTINCT ...) is not valid T-SQL. "
-                    "This error typically occurs when you're adding extra columns beyond what the question asks for. "
-                    "\n\nFor the 'containers at different transit locations' query, the SELECT must be EXACTLY:\n"
-                    "  SELECT TrackNumber, COUNT(DISTINCT LocationName) AS DistinctTransitLocations\n"
-                    "Do NOT add STRING_AGG, Container counts, or any other columns. "
-                    "\n\nIf you need to deduplicate values for a different query, use a subquery:\n"
-                    "  STRING_AGG(col, ', ') WITHIN GROUP (ORDER BY col) FROM (SELECT DISTINCT col FROM ...) sub"
-                )
-                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
-                return error_msg
-
-            # Additional check: Container transit query pattern should have exactly 2 columns
-            # Pattern: contains container route, COUNT(DISTINCT LocationName), NOT EXISTS POD
-            is_container_transit_pattern = (
-                "V_SEALINE_CONTAINER_ROUTE" in query_upper and
-                "COUNT(DISTINCT" in query_upper and
-                "NOT EXISTS" in query_upper and
-                "EVENTLINES LIKE '%POD%'" in query_upper
-            )
-            if is_container_transit_pattern:
-                # This pattern should select EXACTLY: TrackNumber, COUNT(DISTINCT LocationName)
-                select_match = query.upper().find("SELECT")
-                from_match = query.upper().find("FROM", select_match)
-                if select_match >= 0 and from_match > select_match:
-                    select_clause = query[select_match:from_match]
-
-                    # Check for forbidden extra columns/aggregations
-                    has_string_agg = "STRING_AGG" in select_clause.upper()
-                    has_multiple_counts = select_clause.upper().count("COUNT(DISTINCT") > 1
-                    has_container_count = "CONTAINER" in select_clause.upper() or "CONTAINER_NUMBER" in select_clause.upper()
-
-                    # Count top-level column separators (commas not inside parens)
-                    paren_depth = 0
-                    comma_count = 0
-                    for char in select_clause:
-                        if char == '(':
-                            paren_depth += 1
-                        elif char == ')':
-                            paren_depth -= 1
-                        elif char == ',' and paren_depth == 0:
-                            comma_count += 1
-
-                    # Should have exactly 1 comma (between TrackNumber and COUNT(...))
-                    if has_string_agg or has_multiple_counts or has_container_count or comma_count > 1:
-                        error_msg = (
-                            "❌ QUERY ERROR: The 'containers at different transit locations' pattern must have exactly 2 columns:\n"
-                            "  SELECT TrackNumber, COUNT(DISTINCT LocationName) AS DistinctTransitLocations\n\n"
-                            "Your query has extra columns:\n"
-                        )
-                        if has_string_agg:
-                            error_msg += "  ❌ STRING_AGG(...) — remove this\n"
-                        if has_multiple_counts:
-                            error_msg += "  ❌ Multiple COUNT aggregations — keep only COUNT(DISTINCT LocationName)\n"
-                        if has_container_count:
-                            error_msg += "  ❌ Container count or container columns — remove these\n"
-
-                        error_msg += (
-                            "\nExtra columns break the query structure. Return ONLY:\n"
-                            "  - TrackNumber\n"
-                            "  - COUNT(DISTINCT LocationName) AS DistinctTransitLocations\n"
-                            "Nothing else."
-                        )
-                        yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
-                        return error_msg
-
-            # Check for incorrect Status-based filtering in "not delivered" queries
-            # Pattern: queries that filter Status field (e.g., Status <> 'DELIVERED') for "not delivered" intent
-            has_status_filtering = (("STATUS" in query_upper and "<>" in query_upper) or
-                                   ("STATUS" in query_upper and "!=" in query_upper) or
-                                   ("STATUS" in query_upper and "NOT IN" in query_upper))
-            has_pod_keyword = "POD" in query_upper
-            has_war_zone_keyword = any(term in query_upper for term in ["WAR", "ZONE", "RED SEA", "PERSIAN", "ADEN", "MEDITERRANEAN"])
-
-            # Debug logging
-            logger.info(f"Status validation: has_status_filtering={has_status_filtering}, has_pod_keyword={has_pod_keyword}, has_war_zone_keyword={has_war_zone_keyword}, DELIVERED_in_query={('DELIVERED' in query_upper)}")
-
-            # If using Status-based filtering for a "not delivered" query, REJECT it
-            if has_status_filtering and has_pod_keyword and (has_war_zone_keyword or "DELIVERED" in query_upper):
-                error_msg = (
-                    "❌ INCORRECT LOGIC: Status-Based 'Not Delivered' Filter\n\n"
-                    "Your query uses: WHERE h.Status <> 'DELIVERED' or similar Status filtering\n\n"
-                    "THIS IS WRONG. Status field is a summary and does NOT determine delivery status.\n"
-                    "A shipment with Status='IN_TRANSIT' can still be delivered if POD has IsActual=1.\n\n"
-                    "YOU MUST use NOT EXISTS with IsActual flag instead:\n\n"
-                    "  AND NOT EXISTS (SELECT 1 FROM Sealine_Route r2\n"
-                    "    WHERE r2.TrackNumber = h.TrackNumber\n"
-                    "    AND r2.RouteType IN ('Pod', 'Post POD')\n"
-                    "    AND r2.IsActual = 1\n"
-                    "    AND r2.DeletedDt IS NULL)\n\n"
-                    "The IsActual = 1 flag is the ONLY reliable indicator of actual delivery.\n"
-                    "Remove Status-based filtering and add the NOT EXISTS clause."
-                )
-                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
-                return error_msg
-
-            # Check for "not delivered" queries missing the NOT EXISTS exclusion
-            # Pattern: queries with POD + geographic filtering (BETWEEN/LAT/LNG) but NO NOT EXISTS
-            has_pod_keyword = "POD" in query_upper
-            has_sealine_route = "SEALINE_ROUTE" in query_upper
-            has_location_filter = "LAT" in query_upper or "LATITUDE" in query_upper
-            uses_lat_lng_filter = "BETWEEN" in query_upper and ("LAT" in query_upper or "LATITUDE" in query_upper)
-            has_not_exists_exclusion = "NOT EXISTS" in query_upper and "ISACTUAL" in query_upper
-
-            # Check if query is a flat SELECT (not using WITH/CTE) for a war zone query
-            is_flat_select = "WITH" not in query_upper and "SELECT" in query_upper[:20]  # Flat SELECT at start
-            has_two_cte_structure = "WITH" in query_upper and query_upper.count("AS (") >= 2
-
-            # If query has POD + location filtering (war zones) but NO NOT EXISTS, it's missing the "not delivered" constraint
-            # This applies regardless of whether IN_TRANSIT is present
-            if has_pod_keyword and has_sealine_route and has_location_filter and uses_lat_lng_filter and not has_not_exists_exclusion:
-                structure_issue = ""
-                if is_flat_select and not has_two_cte_structure:
-                    structure_issue = "  • STRUCTURE PROBLEM: You generated a flat SELECT instead of the MANDATORY 2-CTE pattern\n"
-
-                error_msg = (
-                    "❌ CRITICAL ERROR: War Zone POD Query Invalid\n\n"
-                    "Your query attempts to find tracking numbers with POD in war zones but:\n"
-                    "  1. Does NOT follow the MANDATORY 2-CTE structure (WITH pod_locations AS ..., war_zone_pod AS ...)\n"
-                    "  2. Is MISSING the critical NOT EXISTS clause for 'not delivered' filtering\n"
-                    "  3. Will return WRONG RESULTS (42,000+ rows instead of ~96 undelivered ones)\n"
-                    f"{structure_issue}\n"
-                    "YOU MUST use this EXACT 2-CTE structure (copy-paste if needed):\n\n"
-                    "WITH pod_locations AS (\n"
-                    "    SELECT DISTINCT\n"
-                    "        h.TrackNumber,\n"
-                    "        l.Name AS POD_Location,\n"
-                    "        TRY_CAST(l.Lat AS FLOAT) AS Lat,\n"
-                    "        TRY_CAST(l.Lng AS FLOAT) AS Lng\n"
-                    "    FROM Sealine_Header h\n"
-                    "    INNER JOIN Sealine_Route r ON h.TrackNumber = r.TrackNumber AND r.DeletedDt IS NULL\n"
-                    "    INNER JOIN Sealine_Locations l ON r.TrackNumber = l.TrackNumber AND r.Location_Id = l.Id AND l.DeletedDt IS NULL\n"
-                    "    WHERE h.Status = 'IN_TRANSIT'\n"
-                    "      AND r.RouteType = 'Pod'\n"
-                    "      AND r.DeletedDt IS NULL\n"
-                    "      AND NOT EXISTS (\n"
-                    "          SELECT 1 FROM Sealine_Route r2\n"
-                    "          WHERE r2.TrackNumber = h.TrackNumber\n"
-                    "            AND r2.RouteType IN ('Pod', 'Post POD')\n"
-                    "            AND r2.IsActual = 1\n"
-                    "            AND r2.DeletedDt IS NULL\n"
-                    "      )\n"
-                    "),\n"
-                    "war_zone_pod AS (\n"
-                    "    SELECT\n"
-                    "        TrackNumber, POD_Location, Lat, Lng\n"
-                    "    FROM pod_locations\n"
-                    "    WHERE\n"
-                    "        (Lat BETWEEN 29 AND 33.5 AND Lng BETWEEN 33.8 AND 36.5) OR\n"
-                    "        (Lat BETWEEN 41 AND 48 AND Lng BETWEEN 28 AND 42) OR\n"
-                    "        (Lat BETWEEN 12 AND 28 AND Lng BETWEEN 32 AND 52) OR\n"
-                    "        (Lat BETWEEN 8 AND 23 AND Lng BETWEEN 22 AND 38)\n"
-                    ")\n"
-                    "SELECT TrackNumber, POD_Location, Lat, Lng FROM war_zone_pod ORDER BY TrackNumber\n\n"
-                    "CRITICAL RULES:\n"
-                    "  • Use ONLY this structure — do NOT flatten into a single SELECT\n"
-                    "  • Return EXACTLY 4 columns: TrackNumber, POD_Location, Lat, Lng\n"
-                    "  • Use base tables (Sealine_Header, Sealine_Route, Sealine_Locations) — NOT views\n"
-                    "  • The NOT EXISTS clause with IsActual=1 is MANDATORY\n"
-                    "  • Geographic boundaries are FIXED and must not be changed\n"
-                )
-                yield _sse("tool_result", {"tool": "execute_sql", "result": error_msg, "truncated": False})
-                return error_msg
 
             result = execute_sql(query)
             self.sql_calls += 1
@@ -1453,49 +1264,98 @@ class SealineAgent:
                 break
 
             try:
-                with self.client.messages.stream(
+                # Build OpenAI messages: system + conversation history
+                openai_messages = [{"role": "system", "content": sys_content}] + self.messages
+
+                stream = self.client.chat.completions.create(
                     model=self.model,
                     max_tokens=self.max_tokens,
-                    system=sys_content,
-                    messages=self.messages,
-                    tools=tools,
-                ) as stream:
-                    # Stream text tokens to the frontend as they arrive
-                    for text in stream.text_stream:
-                        yield _sse("text_delta", {"delta": text})
+                    messages=openai_messages,
+                    tools=tools if tools else None,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
 
-                    # Get the complete final message (already assembled by the SDK)
-                    final_message = stream.get_final_message()
+                # Collect streamed response
+                collected_text = ""
+                tool_calls_by_index: dict[int, dict] = {}
+                finish_reason = None
+                usage_prompt = 0
+                usage_completion = 0
+
+                for chunk in stream:
+                    if chunk.usage:
+                        usage_prompt = chunk.usage.prompt_tokens or 0
+                        usage_completion = chunk.usage.completion_tokens or 0
+
+                    if not chunk.choices:
+                        continue
+
+                    choice = chunk.choices[0]
+                    finish_reason = choice.finish_reason or finish_reason
+                    delta = choice.delta
+
+                    # Stream text content
+                    if delta and delta.content:
+                        collected_text += delta.content
+                        yield _sse("text_delta", {"delta": delta.content})
+
+                    # Accumulate tool calls
+                    if delta and delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_by_index:
+                                tool_calls_by_index[idx] = {
+                                    "id": tc.id or "",
+                                    "name": "",
+                                    "arguments": "",
+                                }
+                            entry = tool_calls_by_index[idx]
+                            if tc.id:
+                                entry["id"] = tc.id
+                            if tc.function and tc.function.name:
+                                entry["name"] = tc.function.name
+                            if tc.function and tc.function.arguments:
+                                entry["arguments"] += tc.function.arguments
 
                 # Accumulate token usage
-                msg_input_tokens += final_message.usage.input_tokens
-                msg_output_tokens += final_message.usage.output_tokens
-                self.total_input_tokens += final_message.usage.input_tokens
-                self.total_output_tokens += final_message.usage.output_tokens
+                msg_input_tokens += usage_prompt
+                msg_output_tokens += usage_completion
+                self.total_input_tokens += usage_prompt
+                self.total_output_tokens += usage_completion
 
-                stop_reason = final_message.stop_reason
+                # Build assistant message for history
+                assistant_msg: dict = {"role": "assistant"}
+                if collected_text:
+                    assistant_msg["content"] = collected_text
+                else:
+                    assistant_msg["content"] = None
 
-                # Build assistant history entry from the response content blocks
-                assistant_content = []
-                for block in final_message.content:
-                    if block.type == "text":
-                        assistant_content.append({"type": "text", "text": block.text})
-                    elif block.type == "tool_use":
-                        assistant_content.append({
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        })
-                self.messages.append({"role": "assistant", "content": assistant_content})
+                if tool_calls_by_index:
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": tc["arguments"],
+                            },
+                        }
+                        for tc in sorted(tool_calls_by_index.values(), key=lambda x: x["id"])
+                    ]
+
+                self.messages.append(assistant_msg)
 
                 # ---- Tool use ----
-                if stop_reason == "tool_use":
-                    tool_use_blocks = [b for b in final_message.content if b.type == "tool_use"]
-                    tool_results: list[dict] = []
+                if finish_reason == "tool_calls" and tool_calls_by_index:
+                    for tc in sorted(tool_calls_by_index.values(), key=lambda x: x["id"]):
+                        tool_name = tc["name"]
+                        try:
+                            tool_input = json.loads(tc["arguments"])
+                        except json.JSONDecodeError:
+                            tool_input = {}
 
-                    for tb in tool_use_blocks:
-                        gen = self._execute_tool(tb.name, tb.input)
+                        gen = self._execute_tool(tool_name, tool_input)
                         result_text = ""
                         try:
                             while True:
@@ -1503,47 +1363,46 @@ class SealineAgent:
                         except StopIteration as stop:
                             result_text = stop.value or ""
 
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tb.id,
+                        self.messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
                             "content": result_text,
                         })
 
-                    self.messages.append({"role": "user", "content": tool_results})
                     continue
 
-                # ---- end_turn or other terminal stop reason ----
+                # ---- stop or other terminal reason ----
                 break
 
-            except anthropic.AuthenticationError as exc:
-                logger.error("Anthropic authentication error: %s", exc)
+            except AuthenticationError as exc:
+                logger.error("Azure OpenAI authentication error: %s", exc)
                 yield _sse("error", {
-                    "error": "Anthropic API authentication failed. Check ANTHROPIC_API_KEY.",
+                    "error": "Azure OpenAI API authentication failed. Check AZURE_OPENAI_API_KEY.",
                     "code": "AUTH_ERROR",
                     "recoverable": False,
                 })
                 break
-            except anthropic.RateLimitError as exc:
-                logger.warning("Anthropic rate limit: %s", exc)
+            except RateLimitError as exc:
+                logger.warning("Azure OpenAI rate limit: %s", exc)
                 yield _sse("error", {
                     "error": "Rate limit reached. Please wait a moment and try again.",
                     "code": "RATE_LIMITED",
                     "recoverable": True,
                 })
                 break
-            except anthropic.APIConnectionError as exc:
-                logger.error("Anthropic connection error: %s", exc)
+            except APIConnectionError as exc:
+                logger.error("Azure OpenAI connection error: %s", exc)
                 yield _sse("error", {
                     "error": "Could not connect to the AI service. Please try again shortly.",
                     "code": "CONNECTION_ERROR",
                     "recoverable": True,
                 })
                 break
-            except anthropic.APIStatusError as exc:
-                logger.error("Anthropic API status error %s: %s", exc.status_code, exc.message)
+            except APIError as exc:
+                logger.error("Azure OpenAI API error %s: %s", exc.status_code, exc.message)
                 yield _sse("error", {
                     "error": "The AI service returned an error. Please try again.",
-                    "code": "ANTHROPIC_API_ERROR",
+                    "code": "OPENAI_API_ERROR",
                     "recoverable": False,
                 })
                 break
