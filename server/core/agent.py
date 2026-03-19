@@ -589,7 +589,13 @@ class SealineAgent:
                 "v_sealine_tracking_count to Sealine_Locations, you MUST join on:\n"
                 "  ON v.TrackNumber = l.TrackNumber AND v.Location_Id = l.Id\n"
                 "NEVER join on LocationName — it is a display-only column with no FK relationship. "
-                "Joining on LocationName produces WRONG results."
+                "Joining on LocationName produces WRONG results.\n\n"
+                "CRITICAL — v_sealine_container_route usage:\n"
+                "The view v_sealine_container_route should ONLY be used for map-related questions "
+                "(i.e. when generating container route maps or container searoute maps). "
+                "For all other container queries (counts, status, filtering, grouping, aggregation), "
+                "use Sealine_Container_Event, Sealine_Container, Sealine_Route, Sealine_Locations, "
+                "v_sealine_container_count, or other appropriate tables/views instead."
             )
         tool_instructions.append(
             "You can generate charts with `generate_plot`, PDF reports with "
