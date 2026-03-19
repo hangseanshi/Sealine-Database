@@ -583,7 +583,13 @@ class SealineAgent:
                 "  - JOIN Sealine_Route r → AND r.DeletedDt IS NULL\n"
                 "  - JOIN Sealine_Locations l → AND l.DeletedDt IS NULL\n"
                 "If you forget h.DeletedDt IS NULL on Sealine_Header, your query WILL return wrong results. "
-                "ALWAYS include it, no exceptions."
+                "ALWAYS include it, no exceptions.\n\n"
+                "CRITICAL SQL RULE — Joining views to Sealine_Locations:\n"
+                "When joining v_sealine_container_route, v_sealine_container_count, or "
+                "v_sealine_tracking_count to Sealine_Locations, you MUST join on:\n"
+                "  ON v.TrackNumber = l.TrackNumber AND v.Location_Id = l.Id\n"
+                "NEVER join on LocationName — it is a display-only column with no FK relationship. "
+                "Joining on LocationName produces WRONG results."
             )
         tool_instructions.append(
             "You can generate charts with `generate_plot`, PDF reports with "
@@ -592,6 +598,24 @@ class SealineAgent:
         )
 
         base = self.system_prompt + "\n\n" + "\n".join(tool_instructions)
+
+        base += (
+            "\n\nIMPORTANT — Data Insights in Every Response:\n"
+            "After answering the user's question, ALWAYS add a brief 'Insights' section with "
+            "data-driven observations. Include trends, anomalies, comparisons, or business context. "
+            "For example:\n"
+            "  - If showing shipment counts, note if the number is higher/lower than typical, "
+            "or compare across regions/time periods.\n"
+            "  - If listing tracking numbers, highlight patterns (e.g., concentration in certain routes, "
+            "carriers, or unusual timing).\n"
+            "  - If showing routes on a map, note the dominant shipping lanes, transit times, "
+            "or geographic patterns.\n"
+            "  - Point out anything that looks unusual or noteworthy in the data.\n"
+            "Also include summary statistics where applicable — counts, averages, min/max, "
+            "percentages, or distributions that help quantify the data.\n"
+            "Keep insights concise (2-5 bullet points) but meaningful. "
+            "Do NOT skip this section — every response should provide analytical value beyond the raw data."
+        )
 
         if self.docs_text:
             base += (

@@ -25,7 +25,16 @@ Sealine_Header.TrackNumber (PK)
 
 Searates_Request_Tracking.TrackingNo → Sealine_Header.TrackNumber
 ResponseLog.Id → Searates_Request_Tracking.LastResponseId
+
+v_sealine_container_count (TrackNumber, Location_Id) → Sealine_Locations (TrackNumber, Id)
+v_sealine_tracking_count (TrackNumber, Location_Id) → Sealine_Locations (TrackNumber, Id)
+v_sealine_container_route (TrackNumber, Location_Id) → Sealine_Locations (TrackNumber, Id)
 ```
+
+**IMPORTANT JOIN RULE:**
+- `v_sealine_container_route.LocationName` is a display-only column — NEVER join on it.
+- To join `v_sealine_container_route` with `Sealine_Locations`, ALWAYS use:
+  `v.TrackNumber = l.TrackNumber AND v.Location_Id = l.Id`
 
 ---
 
