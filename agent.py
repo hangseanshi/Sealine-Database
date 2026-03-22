@@ -308,30 +308,21 @@ def generate_route_map(track_number: str) -> tuple[str, str | None]:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT
-                e.Container_NUMBER,
-                TRY_CAST(e.Order_Id AS INT)  AS Seq,
-                COALESCE(f.name, l.Name)     AS LocationName,
-                COALESCE(
-                    TRY_CAST(f.Lat AS FLOAT), TRY_CAST(l.Lat AS FLOAT)
-                )                            AS Lat,
-                COALESCE(
-                    TRY_CAST(f.Lng AS FLOAT), TRY_CAST(l.Lng AS FLOAT)
-                )                            AS Lng,
-                e.Date,
-                e.Actual,
-                e.Description,
-                h.Sealine_Code,
-                h.Status
+                e.[Container Name]           AS Container_NUMBER,
+                e.[Event Sequence ID]        AS Seq,
+                e.[Location Name]            AS LocationName,
+                e.[Location Latitude]        AS Lat,
+                e.[Location Longitude]       AS Lng,
+                e.[Event Date]               AS Date,
+                e.[Event Date isActual]      AS Actual,
+                e.[Event Description]        AS Description,
+                t.Sealine_Code,
+                t.[Tracking Status]          AS Status
             FROM Sealine_Container_Event e
-            INNER JOIN Sealine_Header h
-                ON e.TrackNumber = h.TrackNumber AND h.DeletedDt IS NULL
-            LEFT JOIN Sealine_Facilities f
-                ON e.TrackNumber = f.TrackNumber AND e.Facility = f.Id AND f.DeletedDt IS NULL
-            LEFT JOIN Sealine_Locations l
-                ON e.TrackNumber = l.TrackNumber AND e.Location = l.Id AND l.DeletedDt IS NULL
+            INNER JOIN Sealine_Tracking t
+                ON e.TrackNumber = t.TrackNumber
             WHERE e.TrackNumber = ?
-              AND e.DeletedDt IS NULL
-            ORDER BY e.Container_NUMBER, TRY_CAST(e.Order_Id AS INT)
+            ORDER BY e.[Container Name], e.[Event Sequence ID]
         """, (track_number,))
         rows = cursor.fetchall()
         conn.close()

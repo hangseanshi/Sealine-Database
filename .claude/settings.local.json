@@ -4,7 +4,10 @@
       "Skill(claude-api)",
       "Skill(claude-api:*)",
       "Bash(pip install:*)",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Bash(python:*)",
+      "Bash(npm run:*)",
+      "Bash(find /c/git/sealine-database-OpenAI -type f -name .env*)"
     ]
   }
 }

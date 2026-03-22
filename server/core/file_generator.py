@@ -944,7 +944,7 @@ def _plot_tracking_route_map(
 ) -> dict[str, Any]:
     """Generate a Leaflet.js tracking route map as a self-contained HTML file.
 
-    Uses v_sealine_tracking_route data with structured locations and routes.
+    Uses Sealine_Tracking data unpivoted into structured locations and routes.
     """
     import json as _json
     import html as _html

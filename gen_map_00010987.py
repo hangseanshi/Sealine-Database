@@ -9,17 +9,15 @@ cursor = conn.cursor()
 
 # Include soft-deleted events — shipment is DELIVERED/archived
 cursor.execute("""
-    SELECT e.Container_NUMBER, TRY_CAST(e.Order_Id AS INT) AS Seq,
-           COALESCE(f.name, l.Name) AS LocationName,
-           COALESCE(TRY_CAST(f.Lat AS FLOAT), TRY_CAST(l.Lat AS FLOAT)) AS Lat,
-           COALESCE(TRY_CAST(f.Lng AS FLOAT), TRY_CAST(l.Lng AS FLOAT)) AS Lng,
-           e.Date, e.Actual, e.Description, h.Sealine_Code, h.Status
+    SELECT e.[Container Name] AS Container_NUMBER, e.[Event Sequence ID] AS Seq,
+           e.[Location Name] AS LocationName,
+           e.[Location Latitude] AS Lat, e.[Location Longitude] AS Lng,
+           e.[Event Date] AS Date, e.[Event Date isActual] AS Actual,
+           e.[Event Description] AS Description, t.Sealine_Code, t.[Tracking Status] AS Status
     FROM Sealine_Container_Event e
-    INNER JOIN Sealine_Header h ON e.TrackNumber = h.TrackNumber
-    LEFT JOIN Sealine_Facilities f ON e.TrackNumber = f.TrackNumber AND e.Facility = f.Id
-    LEFT JOIN Sealine_Locations  l ON e.TrackNumber = l.TrackNumber AND e.Location  = l.Id
-    WHERE e.TrackNumber = ? AND e.Container_NUMBER = ?
-    ORDER BY TRY_CAST(e.Order_Id AS INT)
+    INNER JOIN Sealine_Tracking t ON e.TrackNumber = t.TrackNumber
+    WHERE e.TrackNumber = ? AND e.[Container Name] = ?
+    ORDER BY e.[Event Sequence ID]
 """, (TRACK_NUMBER, CONTAINER))
 rows = cursor.fetchall()
 conn.close()

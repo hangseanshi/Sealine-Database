@@ -151,7 +151,7 @@ TRACKING_ROUTES_TOOL = _to_openai_tool(
         "ONLY call this tool when the user asks for a route map and their message "
         "does NOT contain the word 'container' or 'containers'. "
         "DO NOT call this tool when the user mentions containers — use show_container_routes instead. "
-        "Internally runs the Sealine_Route query and renders a Leaflet map with "
+        "Internally unpivots Sealine_Tracking locations and renders a Leaflet map with "
         "Pre-Pol → Pol → Pod → Post-Pod stops, arrow lines, and per-stop tooltips. "
         "Supply either track_numbers (explicit list) OR subquery (a SQL SELECT that returns "
         "TrackNumber values) — not both."
@@ -288,7 +288,7 @@ CONTAINER_ROUTES_TOOL = _to_openai_tool(
                 "description": (
                     "A SQL SELECT statement returning a single column of Container_NUMBER values, "
                     "used as an IN subquery to filter by container number. "
-                    "Example: \"SELECT Container_NUMBER FROM Sealine_Container WHERE Size = '40'\". "
+                    "Example: \"SELECT DISTINCT [Container Name] FROM Sealine_Container_Event WHERE [Container Size Type] LIKE '%40%'\". "
                     "Use instead of container_numbers when the numbers must be derived from another table."
                 ),
             },
@@ -378,7 +378,7 @@ LOCATION_BUBBLE_MAP_TOOL = _to_openai_tool(
         "Use when the user wants to highlight, pin, or mark specific cities, ports, "
         "or locations — WITHOUT showing shipping routes between them. "
         "The agent must run execute_sql first to obtain lat/lon coordinates "
-        "(query Sealine_Locations for port lat/lng), then pass the results here. "
+        "(use geocode_location for coordinates), then pass the results here. "
         "Bubbles can optionally be sized by a numeric value (e.g. container count per port)."
     ),
     {
@@ -516,6 +516,88 @@ def _sse(event: str, data: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+#  Inline SQL helpers (replace removed database views)
+# ---------------------------------------------------------------------------
+
+def _tracking_route_sql(in_clause: str) -> str:
+    """Return SQL that unpivots Sealine_Tracking into per-location rows.
+
+    Replaces the removed v_sealine_tracking_route view.
+    Returns columns: TrackNumber, Lat, Lng, LocationName, RouteType,
+                     MinOrderId, NoOfContainers, EventLines
+    """
+    return (
+        "WITH route AS ("
+        "SELECT DISTINCT TrackNumber, [Pre-POL Latitude] AS Lat, [Pre-POL Longitude] AS Lng, "
+        "[Pre-POL City] AS LocationName, 'PRE-POL' AS RouteType, 1 AS MinOrderId, "
+        "[No Of Containers] AS NoOfContainers, "
+        "'PRE-POL:' + CONVERT(varchar, CAST([Pre-POL Date] AS DATE), 23) "
+        "+ CASE WHEN [Pre-POL isActual]=1 AND [Pre-POL Occurred]='Yes' THEN ' [A]' "
+        "WHEN [Pre-POL isActual]=1 AND ([Pre-POL Occurred]='No' OR [Pre-POL Occurred] IS NULL) THEN ' (A)' "
+        "ELSE ' (E)' END AS EventLines "
+        "FROM Sealine_Tracking WHERE [Pre-POL Latitude] IS NOT NULL AND [Pre-POL Longitude] IS NOT NULL "
+        "UNION ALL "
+        "SELECT DISTINCT TrackNumber, [POL Latitude], [POL Longitude], "
+        "[POL City], 'POL', 2, [No Of Containers], "
+        "'POL:' + CONVERT(varchar, CAST([POL Date] AS DATE), 23) "
+        "+ CASE WHEN [POL isActual]=1 AND [POL Occurred]='Yes' THEN ' [A]' "
+        "WHEN [POL isActual]=1 AND ([POL Occurred]='No' OR [POL Occurred] IS NULL) THEN ' (A)' "
+        "ELSE ' (E)' END "
+        "FROM Sealine_Tracking WHERE [POL Latitude] IS NOT NULL AND [POL Longitude] IS NOT NULL "
+        "UNION ALL "
+        "SELECT DISTINCT TrackNumber, [POD Latitude], [POD Longitude], "
+        "[POD City], 'POD', 3, [No Of Containers], "
+        "'POD:' + CONVERT(varchar, CAST([POD Date] AS DATE), 23) "
+        "+ CASE WHEN [POD isActual]=1 AND [POD Occurred]='Yes' THEN ' [A]' "
+        "WHEN [POD isActual]=1 AND ([POD Occurred]='No' OR [POD Occurred] IS NULL) THEN ' (A)' "
+        "ELSE ' (E)' END "
+        "FROM Sealine_Tracking WHERE [POD Latitude] IS NOT NULL AND [POD Longitude] IS NOT NULL "
+        "UNION ALL "
+        "SELECT DISTINCT TrackNumber, [Post-POD Latitude], [Post-POD Longitude], "
+        "[Post-POD City], 'POST-POD', 4, [No Of Containers], "
+        "'POST-POD:' + CONVERT(varchar, CAST([Post-POD Date] AS DATE), 23) "
+        "+ CASE WHEN [Post-POD isActual]=1 AND [Post-POD Occurred]='Yes' THEN ' [A]' "
+        "WHEN [Post-POD isActual]=1 AND ([Post-POD Occurred]='No' OR [Post-POD Occurred] IS NULL) THEN ' (A)' "
+        "ELSE ' (E)' END "
+        "FROM Sealine_Tracking WHERE [Post-POD Latitude] IS NOT NULL AND [Post-POD Longitude] IS NOT NULL"
+        ") "
+        "SELECT TrackNumber, Lat, Lng, LocationName, RouteType, MinOrderId, NoOfContainers, EventLines "
+        f"FROM route WHERE TrackNumber IN ({in_clause}) "
+        "ORDER BY TrackNumber, MinOrderId ASC"
+    )
+
+
+def _container_route_sql(where: str) -> str:
+    """Return SQL that aggregates Sealine_Container_Event by container+location.
+
+    Replaces the removed v_sealine_container_route view.
+    The *where* parameter uses alias ``v`` (e.g. ``v.TrackNumber IN (...)``).
+    Returns columns: Container_NUMBER, TrackNumber, Lat, Lng, LocationName,
+                     MinOrderId, EventLines, Vessel
+    """
+    return (
+        "SELECT v.Container_NUMBER, v.TrackNumber, v.Lat, v.Lng, "
+        "v.LocationName, v.MinOrderId, v.EventLines, v.Vessel "
+        "FROM ("
+        "SELECT [Container Name] AS Container_NUMBER, TrackNumber, "
+        "[Location Latitude] AS Lat, [Location Longitude] AS Lng, "
+        "[Location Name] AS LocationName, "
+        "MIN([Event Sequence ID]) AS MinOrderId, "
+        "STRING_AGG("
+        "[Event Description] + ':' + CONVERT(varchar, [Event Date], 120) "
+        "+ CASE WHEN [Event Date isActual]=1 THEN ' (A)' ELSE ' (E)' END"
+        ", CHAR(10)) WITHIN GROUP (ORDER BY [Event Sequence ID]) AS EventLines, "
+        "MAX([Vessel Name]) AS Vessel "
+        "FROM Sealine_Container_Event "
+        "WHERE [Location Latitude] IS NOT NULL AND [Location Longitude] IS NOT NULL "
+        "GROUP BY [Container Name], TrackNumber, [Location Latitude], [Location Longitude], [Location Name]"
+        ") v "
+        f"WHERE {where} "
+        "ORDER BY v.TrackNumber, v.Container_NUMBER, v.MinOrderId ASC"
+    )
+
+
+# ---------------------------------------------------------------------------
 #  Agent class
 # ---------------------------------------------------------------------------
 
@@ -574,33 +656,32 @@ class SealineAgent:
                 "You have access to the `execute_sql` tool which runs live queries "
                 "against the Sealine searates SQL Server database. Use it whenever the "
                 "user asks for data, counts, reports, or anything requiring live results.\n\n"
-                "CRITICAL SQL RULE — Soft-delete filtering (NEVER SKIP THIS):\n"
-                "The tables Sealine_Header, Sealine_Route, and Sealine_Locations use soft deletes via a DeletedDt column. "
-                "EVERY query MUST include `<alias>.DeletedDt IS NULL` for EVERY table alias used. "
-                "This is MANDATORY even if you also filter by Status or other fields.\n"
-                "Examples:\n"
-                "  - FROM Sealine_Header h → WHERE ... AND h.DeletedDt IS NULL\n"
-                "  - JOIN Sealine_Route r → AND r.DeletedDt IS NULL\n"
-                "  - JOIN Sealine_Locations l → AND l.DeletedDt IS NULL\n"
-                "If you forget h.DeletedDt IS NULL on Sealine_Header, your query WILL return wrong results. "
-                "ALWAYS include it, no exceptions.\n\n"
-                "CRITICAL SQL RULE — Joining views to Sealine_Locations:\n"
-                "When joining v_sealine_container_route or "
-                "v_sealine_tracking_count to Sealine_Locations, you MUST join on:\n"
-                "  ON v.TrackNumber = l.TrackNumber AND v.Location_Id = l.Id\n"
-                "NEVER join on LocationName — it is a display-only column with no FK relationship. "
-                "Joining on LocationName produces WRONG results.\n\n"
-                "CRITICAL — v_sealine_container_route usage:\n"
-                "The view v_sealine_container_route should ONLY be used for map-related questions "
-                "(i.e. when generating container route maps or container searoute maps). "
-                "For all other container queries (counts, status, filtering, grouping, aggregation), "
-                "use Sealine_Container_Event, Sealine_Container, Sealine_Route, Sealine_Locations, "
-                "or other appropriate tables/views instead.\n\n"
-                "CRITICAL — v_sealine_tracking_route usage:\n"
-                "The view v_sealine_tracking_route should ONLY be used for map-related questions "
-                "(i.e. when generating tracking route maps). "
-                "For all other tracking queries, use Sealine_Route, Sealine_Locations, "
-                "v_sealine_tracking_count, or other appropriate tables/views instead."
+                "DATABASE SCHEMA — only TWO tables exist:\n"
+                "1. Sealine_Tracking (PK: TrackNumber) — one row per shipment tracking.\n"
+                "   Columns: TrackNumber, Sealine_Code, Sealine_Name, Delivery_Number, Release_Number, "
+                "[No Of Containers], [Tracking Status],\n"
+                "   plus 4 location milestones (Pre-POL, POL, POD, Post-POD) each with: "
+                "City, State, Country, [Country Code], Latitude, Longitude, LOCode, Date, isActual.\n"
+                "   Column naming pattern: [Pre-POL City], [POL Latitude], [POD Date], [Post-POD isActual], etc.\n"
+                "   Occurred columns: [Pre-POL Occurred], [POL Occurred], [POD Occurred], [Post-POD Occurred] — 'Yes'/'No' indicating if tracking reached that milestone.\n"
+                "   [Tracking Status] values: 'Pending Departure', 'Departed from Origin', 'Arrived Destination', 'Delivered'.\n"
+                "   No DeletedDt column — no soft-delete filter needed.\n\n"
+                "2. Sealine_Container_Event (PK: TrackNumber + [Container Name] + [Event Sequence ID]) — container events.\n"
+                "   Columns: TrackNumber, [Container Name], [Container ISO Code], [Container Size Type], "
+                "[Event Sequence ID], [Location Name], [Location Country Code], [Location LOCode], "
+                "[Location Latitude], [Location Longitude], [Event Description], [Event Type], [Event Code], "
+                "[Event Status], [Event Date], [Event Date isActual], [Transport Type], [Vessel Name], "
+                "[Vessel Voyage], [Location Type], [Event Ocurred].\n"
+                "   [Location Type] values: 'Pre-POL', 'POL', 'POD', 'Post-POD' or comma combinations.\n"
+                "   [Event Ocurred] values: 'Yes' (event happened), 'No' (not yet happened).\n"
+                "   No DeletedDt column — no soft-delete filter needed.\n\n"
+                "CRITICAL — NO OTHER TABLES EXIST. Do NOT reference Sealine_Header, Sealine_Route, "
+                "Sealine_Locations, Sealine_Container, Sealine_Facilities, or any views.\n\n"
+                "CRITICAL — Map route data:\n"
+                "Tracking route maps use data unpivoted from Sealine_Tracking (Pre-POL/POL/POD/Post-POD columns). "
+                "Container route maps use data aggregated from Sealine_Container_Event grouped by container + location. "
+                "These are handled internally by the show_tracking_routes and show_container_routes tools — "
+                "do NOT query route data manually for map generation."
             )
         tool_instructions.append(
             "You can generate charts with `generate_plot`, PDF reports with "
@@ -614,13 +695,13 @@ class SealineAgent:
             "\n\nAUTO-DETECT: Tracking Number and Container Number Lookups\n"
             "When the user enters a single word with NO hyphen (e.g. '00010987', '038VH1276706'), "
             "treat it as a TrackNumber and perform a TRACKING STATUS lookup:\n"
-            "  1. Query Sealine_Header for this TrackNumber. Show header info with EXPANDED status:\n"
-            "     - If Status='IN_TRANSIT', check Sealine_Route to determine sub-status:\n"
-            "       * 'In Transit (Pending Departure)' — no POL event with IsActual=1\n"
-            "       * 'In Transit (Departed)' — POL has IsActual=1 but POD does not\n"
-            "       * 'In Transit (Arrived)' — POD has IsActual=1\n"
+            "  1. Query Sealine_Tracking for this TrackNumber. Show header info with EXPANDED status:\n"
+            "     - Derive status from [Tracking Status] column. If 'Departed from Origin', show sub-status:\n"
+            "       * 'In Transit (Pending Departure)' — [POL isActual]=0\n"
+            "       * 'In Transit (Departed)' — [POL isActual]=1 but [POD isActual]=0\n"
+            "       * 'In Transit (Arrived)' — [POD isActual]=1\n"
             "  2. Generate a tracking route map using show_tracking_routes.\n"
-            "  3. STOP HERE. Do NOT query containers, do NOT query v_sealine_tracking_route, "
+            "  3. STOP HERE. Do NOT query containers, "
             "do NOT show any route detail tables, do NOT generate container maps. "
             "ONLY show the header info and the tracking route map.\n"
             "  4. At the END of your response, add a 'Follow-up options' section with these clickable options:\n"
@@ -630,16 +711,16 @@ class SealineAgent:
             "     - **Show me the container searoute (ocean way) route on the map.**\n"
             "     Present them as a numbered list so the user can pick one.\n"
             "  5. When the user picks a follow-up:\n"
-            "     - 'List all containers': SELECT Container_NUMBER, Size_Type, Iso_Code FROM Sealine_Container WHERE TrackNumber='...' AND DeletedDt IS NULL. Title: '<N> container(s) in this shipment'.\n"
-            "     - 'details of tracking route': Query Sealine_Route r JOIN Sealine_Locations l ON r.TrackNumber=l.TrackNumber AND r.Location_Id=l.Id AND l.DeletedDt IS NULL WHERE r.TrackNumber='...' AND r.DeletedDt IS NULL ORDER BY r.OrderId ASC. Show RouteType, LocationName, Date, EventLines, Vessel.\n"
+            "     - 'List all containers': SELECT DISTINCT [Container Name], [Container ISO Code], [Container Size Type] FROM Sealine_Container_Event WHERE TrackNumber='...'. Title: '<N> container(s) in this shipment'.\n"
+            "     - 'details of tracking route': Query Sealine_Tracking for this TrackNumber. Show Pre-POL/POL/POD/Post-POD cities, dates, and isActual status.\n"
             "     - 'containers route on the map': Generate container route map using show_container_routes.\n"
             "     - 'container searoute': Generate container searoute map using show_container_searoute.\n\n"
             "When the user enters a word WITH a hyphen (e.g. '038NY1332530-TRHU7525920'), "
             "treat it as a Container_NUMBER and perform a CONTAINER STATUS lookup:\n"
             "  1. The string before the LAST hyphen is the TrackNumber (e.g. '038NY1332530').\n"
-            "  2. Query Sealine_Header for the TrackNumber. Show header info with expanded status (same rules as above).\n"
-            "  3. Show container details: Container_NUMBER, Size_Type, Iso_Code from Sealine_Container.\n"
-            "  4. Show all route data: SELECT * FROM v_sealine_container_route WHERE Container_NUMBER='...' ORDER BY MinOrderId ASC.\n"
+            "  2. Query Sealine_Tracking for the TrackNumber. Show header info with expanded status (same rules as above).\n"
+            "  3. Show container details: [Container Name], [Container ISO Code], [Container Size Type] from Sealine_Container_Event (use DISTINCT).\n"
+            "  4. Show all container events from Sealine_Container_Event WHERE [Container Name]='...' ORDER BY [Event Sequence ID] ASC.\n"
             "  5. Generate a container searoute map using show_container_searoute with this container_number.\n\n"
         )
 
@@ -850,8 +931,7 @@ class SealineAgent:
 
         elif name == "show_tracking_routes":
             # ── Dedicated tracking-number route map tool ────────────────────
-            # Uses v_sealine_tracking_route view (pre-aggregated per location).
-            # NEVER uses Sealine_Locations directly.
+            # Unpivots Sealine_Tracking Pre-POL/POL/POD/Post-POD into rows.
             # Triggered ONLY when user asks for route map WITHOUT "container".
             import re as _re
             track_numbers = tool_input.get("track_numbers") or []
@@ -869,13 +949,7 @@ class SealineAgent:
             else:
                 in_clause = ", ".join(f"'{v}'" for v in track_numbers)
 
-            sql = (
-                "SELECT TrackNumber, Lat, Lng, LocationName, "
-                "RouteType, MinOrderId, NoOfContainers, EventLines "
-                "FROM v_sealine_tracking_route "
-                f"WHERE TrackNumber IN ({in_clause}) "
-                "ORDER BY TrackNumber, MinOrderId ASC"
-            )
+            sql = _tracking_route_sql(in_clause)
 
             yield _sse("tool_start", {"tool": "execute_sql", "query": sql})
             result = execute_sql(sql)
@@ -1067,13 +1141,7 @@ class SealineAgent:
             else:
                 in_clause = ", ".join(f"'{v}'" for v in track_numbers)
 
-            sql = (
-                "SELECT TrackNumber, Lat, Lng, LocationName, "
-                "RouteType, MinOrderId, NoOfContainers, EventLines "
-                "FROM v_sealine_tracking_route "
-                f"WHERE TrackNumber IN ({in_clause}) "
-                "ORDER BY TrackNumber, MinOrderId ASC"
-            )
+            sql = _tracking_route_sql(in_clause)
 
             yield _sse("tool_start", {"tool": "execute_sql", "query": sql})
             result = execute_sql(sql)
@@ -1273,10 +1341,7 @@ class SealineAgent:
 
         elif name == "show_container_routes":
             # ── Dedicated container-route map tool ─────────────────────────
-            # Uses v_sealine_container_route — Sealine_Container_Event MUST NOT
-            # be referenced here or anywhere in the codebase.
-            # Columns available: Container_NUMBER, TrackNumber, Lat, Lng,
-            #   LocationName, MinOrderId, EventLines, Vessel  (no Country_Code / LOCode)
+            # Aggregates Sealine_Container_Event by container + location.
             import re as _re
             track_numbers             = tool_input.get("track_numbers") or []
             container_numbers         = tool_input.get("container_numbers") or []
@@ -1303,15 +1368,7 @@ class SealineAgent:
                 vals  = ", ".join(f"'{v}'" for v in container_numbers)
                 where = f"v.Container_NUMBER IN ({vals})"
 
-            # Columns: Container_NUMBER, TrackNumber, Lat, Lng, LocationName,
-            #          MinOrderId, EventLines, Vessel  (no Country_Code / LOCode)
-            sql = (
-                "SELECT v.Container_NUMBER, v.TrackNumber, v.Lat, v.Lng, "
-                "v.LocationName, v.MinOrderId, v.EventLines, v.Vessel "
-                "FROM v_sealine_container_route v "
-                f"WHERE {where} AND v.Lat IS NOT NULL AND v.Lng IS NOT NULL "
-                "ORDER BY v.TrackNumber, v.Container_NUMBER, v.MinOrderId ASC"
-            )
+            sql = _container_route_sql(where)
 
             yield _sse("tool_start", {"tool": "execute_sql", "query": sql})
             result = execute_sql(sql)
@@ -1514,13 +1571,7 @@ class SealineAgent:
                 vals  = ", ".join(f"'{v}'" for v in container_numbers)
                 where = f"v.Container_NUMBER IN ({vals})"
 
-            sql = (
-                "SELECT v.Container_NUMBER, v.TrackNumber, v.Lat, v.Lng, "
-                "v.LocationName, v.MinOrderId, v.EventLines, v.Vessel "
-                "FROM v_sealine_container_route v "
-                f"WHERE {where} AND v.Lat IS NOT NULL AND v.Lng IS NOT NULL "
-                "ORDER BY v.TrackNumber, v.Container_NUMBER, v.MinOrderId ASC"
-            )
+            sql = _container_route_sql(where)
 
             yield _sse("tool_start", {"tool": "execute_sql", "query": sql})
             result = execute_sql(sql)

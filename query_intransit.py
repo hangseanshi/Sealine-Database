@@ -11,33 +11,29 @@ sql = """
 WITH LatestActualEvents AS (
     SELECT
         e.TrackNumber,
-        e.Container_NUMBER,
-        e.Location,
-        e.Facility,
-        h.Sealine_Code,
+        e.[Container Name] AS Container_NUMBER,
+        e.[Location Name] AS LocationName,
+        e.[Location LOCode] AS LocationCode,
+        t.Sealine_Code,
         ROW_NUMBER() OVER (
-            PARTITION BY e.TrackNumber, e.Container_NUMBER
-            ORDER BY TRY_CAST(e.Order_Id AS INT) DESC
+            PARTITION BY e.TrackNumber, e.[Container Name]
+            ORDER BY e.[Event Sequence ID] DESC
         ) AS rn
     FROM Sealine_Container_Event e
-    INNER JOIN Sealine_Header h ON e.TrackNumber = h.TrackNumber
-    WHERE e.Actual = 1
-      AND e.DeletedDt IS NULL
-      AND h.Status = 'IN_TRANSIT'
-      AND h.DeletedDt IS NULL
-      AND h.Sealine_Code <> 'DHC2'
+    INNER JOIN Sealine_Tracking t ON e.TrackNumber = t.TrackNumber
+    WHERE e.[Event Ocurred] = 'Yes'
+      AND t.[Tracking Status] IN ('Pending Departure', 'Departed from Origin')
+      AND t.Sealine_Code <> 'DHC2'
 ),
 LatestWithLocation AS (
     SELECT
-        lae.TrackNumber,
-        lae.Sealine_Code,
-        lae.Container_NUMBER,
-        l.Name   AS CityName,
-        l.LOCode AS CityCode
-    FROM LatestActualEvents lae
-    LEFT JOIN Sealine_Locations l
-        ON lae.TrackNumber = l.TrackNumber AND lae.Location = l.Id AND l.DeletedDt IS NULL
-    WHERE lae.rn = 1
+        TrackNumber,
+        Sealine_Code,
+        Container_NUMBER,
+        LocationName  AS CityName,
+        LocationCode  AS CityCode
+    FROM LatestActualEvents
+    WHERE rn = 1
 )
 SELECT
     TrackNumber,
