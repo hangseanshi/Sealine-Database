@@ -1,85 +1,162 @@
 ## Core Data Model
-**Sealine_Tracking (PK: TrackNumber)** — central shipment record
-- TrackNumber: The gloal sealine tracking number.
-- Sealine_Code: The sealine carrier code.
-- Sealine_Name: The sealine carrier full name.
-- Delivery_Number: SAP delivery number associated with the shipment.
-- Release_Number: SAP Release number associated with the shipment.
-- No Of Containers: Total number of containers in this tracking.
-- Pre-POL City: The city of the Pre-POL (Pre-Port of Loading).
-- Pre-POL State: The state/province of the Pre-POL (Pre-Port of Loading).
-- Pre-POL Country: The full country name of the Pre-POL (Pre-Port of Loading).
-- Pre-POL Country Code: The 2 characters country abbrivation of the Pre-POL (Pre-Port of Loading).
-- Pre-POL Latitude: The Latitude of the Pre-POL (Pre-Port of Loading).
-- Pre-POL Longitude: The Logitude of the Pre-POL (Pre-Port of Loading).
-- Pre-POL LOCode: The unique port code for the Pre-POL (Pre-Port of Loading).
-- Pre-POL Date: The date when tracking reaches of the Pre-POL (Pre-Port of Loading).
-- Pre-POL isActual: The date is actual/confirmed of the Pre-POL (Pre-Port of Loading).
-- Pre-POL Occurred: Yes/No value to indicates if the tracking actually reached the Pre-POL or not.
-- POL City: The city of the POL (Port of Loading).
-- POL State: The state/province of the POL (Port of Loading).
-- POL Country: The full country name of the POL (Port of Loading).
-- POL Country Code: The 2 characters country abbrivation of the POL (Port of Loading).
-- POL Latitude: The Latitude of the POL (Port of Loading).
-- POL Longitude: The Logitude of the POL (Port of Loading).
-- POL LOCode: The unique port code for the POL (Port of Loading).
-- POL Date: The date when tracking reaches of the POL (Port of Loading).
-- POL isActual: The date is actual/confirmed of the POL (Port of Loading). If isActual=1, "POL Date" is called "ATD", if isActual=0, "POL Date" is called "ETD".
-- POL Occurred: Yes/No value to indicates if the tracking actually reached the POL or not.
-- POD City: The city of the POD (Port of Discharge).
-- POD State: The state/province of the POD (Port of Discharge).
-- POD Country: The full country name of the POD (Port of Discharge).
-- POD Country Code: The 2 characters country abbrivation of the POD (Port of Discharge).
-- POD Latitude: The Latitude of the POD (Port of Discharge).
-- POD Longitude: The Logitude of the POD (Port of Discharge).
-- POD LOCode: The unique port code for the POD (Port of Discharge).
-- POD Date: The date when tracking reaches of the POD (Port of Discharge).
-- POD isActual: The date is actual/confirmed of the POD (Port of Discharge). if isActual=1, "POD Date" is called "ATA', if isActual=0, "POD Date" is called "ETA".
-- POD Occurred: Yes/No value to indicates if the tracking actually reached the POD or not.
-- Post-POD City: The city of the Post-POD (Post-Port of Discharge).
-- Post-POD State: The state/province of the Post-POD (Post-Port of Discharge).
-- Post-POD Country: The full country name of the Post-POD (Post-Port of Discharge).
-- Post-POD Country Code: The 2 characters country abbrivation of the Post-POD (Post-Port of Discharge).
-- Post-POD Latitude: The Latitude of the Post-POD (Post-Port of Discharge).
-- Post-POD Longitude: The Logitude of the Post-POD (Post-Port of Discharge).
-- Post-POD LOCode: The unique port code for the Post-POD (Post-Port of Discharge).
-- Post-POD Date: The date when tracking reaches of the Post-POD (Post-Port of Discharge).
-- Post-POD isActual: The date is actual/confirmed of the Post-POD (Post-Port of Discharge).
-- Post-POD Occurred: Yes/No value to indicates if the tracking actually reached the Post-POD or not.
-- Tracking Status: Pending Departure,Arrived Destination,Delivered,Departed from Origin
 
-**Sealine_Container_event (PK: TrackNumber,Container,Event Sequence ID)** — central container events for each TrackNumber
-- TrackNumber: The gloal sealine tracking number, this is FK reference to Sealine_Tracking.TrackNumber
-- Container Name: The name of the container.
-- Container ISO Code: The ISO code for the container type.
-- Container Size Type: The name of the container type.
-- Event Sequence ID: The sequence of when event happens. The container event always happens from lower "Event Sequence ID" to higher "Event Sequence ID". For example, "Event Sequence ID"=1 is the first event of the container, "Event Sequence ID"=2 is the next event happens after "Event Sequence ID"=1.
-- Location Name: The name of the location in where the event happens.
-- Location Country Code: The 2 characters country code in where the event happens.
-- Location LOCode: The port LOCode in where the event happens. In some of the cases, the LOCode may not be populated if the event happens in somewhere other than a standard port location.
-- Location Latitude: The latitude in where the event happens.
-- Location Longitude: The longitude in where the event happens.
-- Event Description: The description of the event.
-- Event Type: The type of the event.
-- Event Code: The code of the event.
-- Event Status: The status of the event.
-- Event Date: The date when the event happens.
-- Event Date isActual: Is the date of the event actual/confirmed.
-- Transport Type: The event happens on land or sea
-- Vessel Name: The name of the vessel if vessel involved in this event.
-- Vessel Voyage: The voyage of the event.
-- Location Type: The type of the location, it could be Pre-POL, POL, POD, Post-POD or any combination of these delimited by comma (,). This is to indicate the location is the tracking Pre-POL, POL, POD or Post-POD location.
-- Event Occurred: Yes - The event already occured. No - Event not yet occur.
+### Sealine_Tracking
+**Primary Key:** TrackNumber
+
+Central shipment record containing route stops and their status.
+
+| Field | Description |
+|-------|-------------|
+| TrackNumber | Global sealine tracking number |
+| Sealine_Code | Sealine carrier code |
+| Sealine_Name | Sealine carrier full name |
+| Delivery_Number | SAP delivery number associated with the shipment |
+| Release_Number | SAP release number associated with the shipment |
+| No Of Containers | Total number of containers in this tracking |
+| Tracking Status | Current status of the tracking. Values: `Pending Departure`, `Departed from Origin`, `Arrived Destination`, `Delivered` |
+
+#### Route Stop Fields
+Each route stop (Pre-POL, POL, POD, Post-POD) shares the same set of fields. Pre-POL and Post-POD are optional; POL and POD are mandatory.
+
+| Field | Description |
+|-------|-------------|
+| {Stop} City | City of the stop |
+| {Stop} State | State/province of the stop |
+| {Stop} Country | Full country name of the stop |
+| {Stop} Country Code | 2-character country abbreviation |
+| {Stop} Latitude | Latitude coordinate of the stop |
+| {Stop} Longitude | Longitude coordinate of the stop |
+| {Stop} LOCode | Unique port code of the stop |
+| {Stop} Date | Date when the tracking reaches this stop. See date label rules below |
+| {Stop} isActual | Whether the date is confirmed (`1`) or estimated (`0`). See date label rules below |
+| {Stop} Occurred | Whether the tracking has physically reached this stop (`Yes` / `No`) |
+
+**Date Label Rules based on `isActual`:**
+
+| Stop | isActual = 1 (Actual) | isActual = 0 (Estimated) |
+|------|-----------------------|--------------------------|
+| POL Date | ATD (Actual Time of Departure) | ETD (Estimated Time of Departure) |
+| POD Date | ATA (Actual Time of Arrival) | ETA (Estimated Time of Arrival) |
+| Pre-POL Date | Actual Date | Estimated Date |
+| Post-POD Date | Actual Date | Estimated Date |
+
+---
+
+### Sealine_Container_Event
+**Primary Key:** TrackNumber, Container Name, Event Sequence ID
+
+Container-level events for each TrackNumber, representing the detailed movement and activity of each container along its route.
+
+| Field | Description |
+|-------|-------------|
+| TrackNumber | FK → `Sealine_Tracking.TrackNumber` |
+| Container Name | Name/ID of the container |
+| Container ISO Code | ISO code for the container type |
+| Container Size Type | Descriptive name of the container type |
+| Event Sequence ID | Chronological order of events; lower = earlier. Defines the route sequence: 1 → 2 → 3 → … |
+| Location Name | Name of the location where the event occurs |
+| Location Country Code | 2-character country code of the event location |
+| Location LOCode | Port LOCode of the event location (may be empty for non-standard port locations) |
+| Location Latitude | Latitude coordinate of the event location |
+| Location Longitude | Longitude coordinate of the event location |
+| Event Description | Description of the event |
+| Event Type | Type/category of the event |
+| Event Code | Code of the event |
+| Event Status | Status of the event |
+| Event Date | Date when the event occurs |
+| Event Date isActual | Whether the event date is confirmed (`1`) or estimated (`0`) |
+| Transport Type | Mode of transport for this event (`Land` / `Sea`) |
+| Vessel Name | Name of the vessel involved, if applicable |
+| Vessel Voyage | Voyage identifier, if applicable |
+| Location Type | Route stop classification of this location: `Pre-POL`, `POL`, `POD`, `Post-POD`, or a comma-delimited combination. Blank or `TRANSIT` for intermediate stops |
+| Event Occurred | Whether the event has already taken place (`Yes` / `No`) |
 
 ## Critical Implementation Notes
-1. **Sealine_Tracking** 
-- The Route of the tracking is always travel from Pre-POL -> POL -> POD -> Post-POD. Pre-POL and Post-POD is optional for the tracking. On the other hand, POL and POD are mandatory for all the tracking.
-- "POL Location" should be display as "POL City"/"POL Country Code"("POL LOCode"). For example: Houston/US(USHOU). Use the same rule for "Pre-POL Location", "POD Location" and "Post-POD Location"
-- Columns like "Pre-POL Occurred","POL Occurred","POD Occurred" and "Post-POD Occurred" is the indicator to identify where the actual location is. For example, if "POD Occurred"=Yes means the tracking is actually reached POD. To identify the latest actual location, we should search reversely from "Post-POD Occurred" -> "POD Occurred" -> "POL Occurred" -> "Pre-POL Occurred", the first Yes value indicate the latest location of the tracking.
-2. **Sealine_Container_event** 
-- When reference a container, we should use the format of "TrackNumber"-"Container Name". For example, the container name CAAU9988821 in TrackNumber 038VH9472368 should be always referenced as 038VH9472368-CAAU9988821
-- The event of the container always happens from lower "Event Sequence ID" to higher "Event Sequence ID".
-- Multiple event can happen at the same location.
-- The container event is also indicate the route stop and route line of each container. The route stop will be the unique locations. The route line will be from a lower "Event Sequence ID" to immediate higher "Event Sequence ID". From example, the route is ways from "Event Sequence ID" 1->2->3->4 etc. The lower "Event Sequence ID" is also called Event Start Location. The immediate higher "Event Sequence ID" is called Event End Location.
-- "Event Occurred" indicate if the event already happened or not. In order to identify the latest known container location, we can search from the highest "Container Sequence ID" to lower "Container Sequence ID" in sequence, the first record has the record with "Event Occurred"=Yes is the latest known location of the container.
 
+### 1. Sealine_Tracking
+
+**Route Structure**
+- The tracking route always follows this sequence: **Pre-POL → POL → POD → Post-POD**
+- Pre-POL and Post-POD are **optional**; POL and POD are **mandatory** for all trackings.
+
+**Location Display Format**
+- Display all location fields using the format: `{City}/{Country Code}({LOCode})`
+- Example: `Houston/US(USHOU)`
+- Apply this format consistently to: Pre-POL Location, POL Location, POD Location, and Post-POD Location.
+
+**Identifying the Latest Actual Location**
+- The `*_Occurred` columns (Pre-POL Occurred, POL Occurred, POD Occurred, Post-POD Occurred) indicate whether the tracking has physically reached that stop.
+- To find the latest actual location, scan in **reverse order** — Post-POD → POD → POL → Pre-POL — and return the first stop where `Occurred = Yes`.
+
+**Displaying {Stop} Date**
+
+Format: `{Stop Date in YYYY-MM-DD} {Date Indicator}`
+
+**Date Indicator** is determined as follows:
+
+| Condition | Indicator | Meaning |
+|-----------|-----------|---------|
+| `{Stop} isActual = 1` AND `{Stop} Occurred = Yes` | `[A]` | Actual, confirmed |
+| `{Stop} isActual = 1` AND `{Stop} Occurred = No` | `(A)` | Actual date, not yet reached |
+| `{Stop} isActual = 0` | `(E)` | Estimated |
+
+**Examples:**
+- `2025-03-01 [A]` — actual date, stop already reached
+- `2025-03-01 (A)` — actual date, stop not yet reached
+- `2025-03-01 (E)` — estimated date
+---
+
+### 2. Sealine_Container_Event
+
+**Container Reference Format**
+- Always reference a container using the format: `{TrackNumber}-{ContainerName}`
+- Example: Container `CAAU9988821` under TrackNumber `038VH9472368` → `038VH9472368-CAAU9988821`
+
+**Location Display Format**
+
+Format: `{Location Name}/{Location Country Code}({Location Type}:{Location LOCode})`
+
+| Field | Example |
+|-------|---------|
+| Single type | `Houston/US(POL:USHOU)` |
+| Multiple types | `Houston/US(Pre-POL,POL:USHOU)` |
+
+**Event Ordering**
+- Events always occur in ascending order of **Event Sequence ID** (lower ID = earlier event).
+
+**Determining if a Container Reached a Location**
+- For a given TrackNumber, container, and location, check all associated events at that location:
+  - If **any** event has `Event Occurred = Yes` → the container **has reached** that location.
+  - If **no** event has `Event Occurred = Yes` → the container **has not reached** that location. If the previous location has at least one event with `Event Occurred = Yes`, the container is considered to have **departed from that previous location**.
+
+**Route Stops and Route Lines**
+- **Route Stops**: The unique locations derived from the container's events.
+- **Route Lines**: Directional segments connecting consecutive Event Sequence IDs (e.g., 1→2, 2→3, 3→4).
+  - The lower Event Sequence ID end is the **start location** (or Event Start Location).
+  - The immediately higher Event Sequence ID end is the **end location** (or Event End Location).
+
+**Identifying the Latest Known Container Location**
+- Scan events from the **highest Event Sequence ID downward**; the first record with `Event Occurred = Yes` is the container's latest known location.
+
+**Location Types**
+- Containers share the same stop types as the TrackNumber: Pre-POL, POL, POD, Post-POD.
+- Any additional intermediate stops are classified as **TRANSIT**.
+- **Arrived at destination**: any event where `Location Type` contains `POD` and `Event Occurred = Yes`.
+- **Departed from origin**: any event where `Location Type` contains `POL` (but **not** `Pre-POL`) and `Event Occurred = Yes`.
+
+**Event Date**
+
+Format: `{Event Date in YYYY-MM-DD} {Event Date Indicator}`
+
+**Event Date Indicator** is determined as follows:
+
+| Condition | Indicator | Meaning |
+|-----------|-----------|---------|
+| `Event Date isActual = 1` AND `Event Occurred = Yes` | `[A]` | Actual, confirmed |
+| `Event Date isActual = 1` AND `Event Occurred = No` | `(A)` | Actual date, not yet reached |
+| `Event Date isActual = 0` | `(E)` | Estimated |
+
+**Examples:**
+- `2025-03-01 [A]` — actual date, event already occurred
+- `2025-03-01 (A)` — actual date, event not yet occurred
+- `2025-03-01 (E)` — estimated date
