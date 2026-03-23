@@ -220,9 +220,10 @@ GENERATE_WORD_LABEL_TOOL: dict[str, Any] = _to_openai_tool(
                                             "properties": {
                                                 "date": {"type": "string", "description": "Date in YYYY-MM-DD format."},
                                                 "actual": {"type": "boolean", "description": "True if this is an actual event."},
+                                                "occurred": {"type": "boolean", "description": "True if the event has already occurred."},
                                                 "description": {"type": "string"},
                                             },
-                                            "required": ["date", "actual", "description"],
+                                            "required": ["date", "actual", "occurred", "description"],
                                         },
                                     },
                                 },
@@ -838,7 +839,7 @@ MAP_DATA.routes.forEach(function(route) {
         + (fromInfo.loc || '?') + ' &rarr; ' + (toInfo.loc || '?');
       if (fromInfo.date || toInfo.date) {
         tip += '<br>' + (fromInfo.date || '?') + ' &rarr; ' + (toInfo.date || '?')
-             + '&nbsp;&nbsp;<span style="color:#666;font-size:10px">(A)=Actual&nbsp;(E)=Estimated</span>';
+             + '&nbsp;&nbsp;<span style="color:#666;font-size:10px">*A*=Actual&amp;Occurred&nbsp;(A)=Actual&nbsp;(E)=Estimated</span>';
       }
       tip += '</div>';
     }
@@ -4066,9 +4067,14 @@ def generate_word_label(
             run.underline = True
             run.font.size = Pt(11)
 
-        def _event_text(date: str, actual: bool, description: str) -> str:
-            actual_marker = "(A)" if actual else "(E)"
-            return f"{date} {actual_marker}: {description}"
+        def _event_text(date: str, actual: bool, description: str, occurred: bool = False) -> str:
+            if actual and occurred:
+                marker = "*A*"
+            elif actual:
+                marker = "(A)"
+            else:
+                marker = "(E)"
+            return f"{date} {marker}: {description}"
 
         for location in locations:
             loc_name = location.get("name", "")
@@ -4086,7 +4092,7 @@ def generate_word_label(
 
                 first_event = events[0]
                 first_event_text = _event_text(
-                    first_event["date"], first_event["actual"], first_event["description"]
+                    first_event["date"], first_event["actual"], first_event["description"], first_event.get("occurred", False)
                 )
 
                 # ── First-event line: "{seq}.  ContainerName: date (A): desc" ──
@@ -4128,7 +4134,7 @@ def generate_word_label(
                     cont_para.paragraph_format.left_indent = indent
 
                     cont_run = cont_para.add_run(
-                        _event_text(event["date"], event["actual"], event["description"])
+                        _event_text(event["date"], event["actual"], event["description"], event.get("occurred", False))
                     )
                     cont_run.font.size = Pt(11)
 

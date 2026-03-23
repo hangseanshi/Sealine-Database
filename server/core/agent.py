@@ -1,13 +1,8 @@
 """
-Agent Core — Azure OpenAI-powered agentic loop for Sealine Data Chat.
+Agent Core — Multi-provider agentic loop for Sealine Data Chat.
 
+Supports Azure OpenAI and Anthropic Claude, selected via AI_PROVIDER config.
 The SSE event interface is identical — the frontend is unchanged.
-
-Key implementation details:
-  - Client: openai.AzureOpenAI
-  - Tool definitions in OpenAI function-calling format
-  - Tool results sent as role:"tool" messages
-  - Streaming uses client.chat.completions.create(stream=True)
 """
 
 from __future__ import annotations
@@ -21,6 +16,12 @@ import ssl
 
 from openai import AzureOpenAI, APIError, APIConnectionError, RateLimitError, AuthenticationError
 import httpx
+
+try:
+    import anthropic as _anthropic
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _ANTHROPIC_AVAILABLE = False
 
 from server.config import get_config
 from server.core.sql_executor import execute_sql, MAX_ROWS
@@ -532,7 +533,7 @@ def _tracking_route_sql(in_clause: str) -> str:
         "[Pre-POL City] AS LocationName, 'PRE-POL' AS RouteType, 1 AS MinOrderId, "
         "[No Of Containers] AS NoOfContainers, "
         "'PRE-POL:' + CONVERT(varchar, CAST([Pre-POL Date] AS DATE), 23) "
-        "+ CASE WHEN [Pre-POL isActual]=1 AND [Pre-POL Occurred]='Yes' THEN ' [A]' "
+        "+ CASE WHEN [Pre-POL isActual]=1 AND [Pre-POL Occurred]='Yes' THEN ' *A*' "
         "WHEN [Pre-POL isActual]=1 AND ([Pre-POL Occurred]='No' OR [Pre-POL Occurred] IS NULL) THEN ' (A)' "
         "ELSE ' (E)' END AS EventLines "
         "FROM Sealine_Tracking WHERE [Pre-POL Latitude] IS NOT NULL AND [Pre-POL Longitude] IS NOT NULL "
@@ -540,7 +541,7 @@ def _tracking_route_sql(in_clause: str) -> str:
         "SELECT DISTINCT TrackNumber, [POL Latitude], [POL Longitude], "
         "[POL City], 'POL', 2, [No Of Containers], "
         "'POL:' + CONVERT(varchar, CAST([POL Date] AS DATE), 23) "
-        "+ CASE WHEN [POL isActual]=1 AND [POL Occurred]='Yes' THEN ' [A]' "
+        "+ CASE WHEN [POL isActual]=1 AND [POL Occurred]='Yes' THEN ' *A*' "
         "WHEN [POL isActual]=1 AND ([POL Occurred]='No' OR [POL Occurred] IS NULL) THEN ' (A)' "
         "ELSE ' (E)' END "
         "FROM Sealine_Tracking WHERE [POL Latitude] IS NOT NULL AND [POL Longitude] IS NOT NULL "
@@ -548,7 +549,7 @@ def _tracking_route_sql(in_clause: str) -> str:
         "SELECT DISTINCT TrackNumber, [POD Latitude], [POD Longitude], "
         "[POD City], 'POD', 3, [No Of Containers], "
         "'POD:' + CONVERT(varchar, CAST([POD Date] AS DATE), 23) "
-        "+ CASE WHEN [POD isActual]=1 AND [POD Occurred]='Yes' THEN ' [A]' "
+        "+ CASE WHEN [POD isActual]=1 AND [POD Occurred]='Yes' THEN ' *A*' "
         "WHEN [POD isActual]=1 AND ([POD Occurred]='No' OR [POD Occurred] IS NULL) THEN ' (A)' "
         "ELSE ' (E)' END "
         "FROM Sealine_Tracking WHERE [POD Latitude] IS NOT NULL AND [POD Longitude] IS NOT NULL "
@@ -556,7 +557,7 @@ def _tracking_route_sql(in_clause: str) -> str:
         "SELECT DISTINCT TrackNumber, [Post-POD Latitude], [Post-POD Longitude], "
         "[Post-POD City], 'POST-POD', 4, [No Of Containers], "
         "'POST-POD:' + CONVERT(varchar, CAST([Post-POD Date] AS DATE), 23) "
-        "+ CASE WHEN [Post-POD isActual]=1 AND [Post-POD Occurred]='Yes' THEN ' [A]' "
+        "+ CASE WHEN [Post-POD isActual]=1 AND [Post-POD Occurred]='Yes' THEN ' *A*' "
         "WHEN [Post-POD isActual]=1 AND ([Post-POD Occurred]='No' OR [Post-POD Occurred] IS NULL) THEN ' (A)' "
         "ELSE ' (E)' END "
         "FROM Sealine_Tracking WHERE [Post-POD Latitude] IS NOT NULL AND [Post-POD Longitude] IS NOT NULL"
@@ -579,18 +580,18 @@ def _container_route_sql(where: str) -> str:
         "SELECT v.Container_NUMBER, v.TrackNumber, v.Lat, v.Lng, "
         "v.LocationName, v.MinOrderId, v.EventLines, v.Vessel "
         "FROM ("
-        "SELECT [Container Name] AS Container_NUMBER, TrackNumber, "
+        "SELECT TrackNumber + '-' + [Container Name] AS Container_NUMBER, TrackNumber, "
         "[Location Latitude] AS Lat, [Location Longitude] AS Lng, "
-        "[Location Name] AS LocationName, "
+        "[Location Name] + ISNULL(' (' + [Location LOCode] + ')', '') AS LocationName, "
         "MIN([Event Sequence ID]) AS MinOrderId, "
         "STRING_AGG("
-        "[Event Description] + ':' + CONVERT(varchar, [Event Date], 120) "
-        "+ CASE WHEN [Event Date isActual]=1 THEN ' (A)' ELSE ' (E)' END"
+        "[Event Description] + ':' + CONVERT(varchar, CAST([Event Date] AS DATE), 23) "
+        "+ CASE WHEN [Event Date isActual]=1 AND [Event Occurred]='Yes' THEN ' *A*' WHEN [Event Date isActual]=1 AND ([Event Occurred]='No' OR [Event Occurred] IS NULL) THEN ' (A)' ELSE ' (E)' END"
         ", CHAR(10)) WITHIN GROUP (ORDER BY [Event Sequence ID]) AS EventLines, "
         "MAX([Vessel Name]) AS Vessel "
         "FROM Sealine_Container_Event "
         "WHERE [Location Latitude] IS NOT NULL AND [Location Longitude] IS NOT NULL "
-        "GROUP BY [Container Name], TrackNumber, [Location Latitude], [Location Longitude], [Location Name]"
+        "GROUP BY [Container Name], TrackNumber, [Location Latitude], [Location Longitude], [Location Name], [Location LOCode]"
         ") v "
         f"WHERE {where} "
         "ORDER BY v.TrackNumber, v.Container_NUMBER, v.MinOrderId ASC"
@@ -603,7 +604,8 @@ def _container_route_sql(where: str) -> str:
 
 class SealineAgent:
     """
-    Azure OpenAI-powered agent that yields SSE event dicts.
+    Multi-provider agent that yields SSE event dicts.
+    Supports Azure OpenAI and Anthropic Claude.
     """
 
     def __init__(
@@ -622,11 +624,18 @@ class SealineAgent:
         messages: list[dict] | None = None,
     ):
         cfg = get_config()
-        self.client = AzureOpenAI(
-            azure_endpoint=cfg.AZURE_OPENAI_ENDPOINT,
-            api_key=cfg.AZURE_OPENAI_API_KEY,
-            api_version=cfg.AZURE_OPENAI_API_VERSION,
-        )
+        self.provider = cfg.AI_PROVIDER  # "openai" or "claude"
+
+        if self.provider == "claude":
+            if not _ANTHROPIC_AVAILABLE:
+                raise ImportError("anthropic package is required for AI_PROVIDER=claude. Install with: pip install anthropic")
+            self.client = _anthropic.Anthropic(api_key=cfg.ANTHROPIC_API_KEY)
+        else:
+            self.client = AzureOpenAI(
+                azure_endpoint=cfg.AZURE_OPENAI_ENDPOINT,
+                api_key=cfg.AZURE_OPENAI_API_KEY,
+                api_version=cfg.AZURE_OPENAI_API_VERSION,
+            )
         self.model = model
         self.system_prompt = system_prompt
         self.max_tokens = max_tokens
@@ -650,97 +659,7 @@ class SealineAgent:
     # ------------------------------------------------------------------
 
     def _system_content(self) -> str:
-        tool_instructions: list[str] = []
-        if self.db_enabled:
-            tool_instructions.append(
-                "You have access to the `execute_sql` tool which runs live queries "
-                "against the Sealine searates SQL Server database. Use it whenever the "
-                "user asks for data, counts, reports, or anything requiring live results.\n\n"
-                "DATABASE SCHEMA — only TWO tables exist:\n"
-                "1. Sealine_Tracking (PK: TrackNumber) — one row per shipment tracking.\n"
-                "   Columns: TrackNumber, Sealine_Code, Sealine_Name, Delivery_Number, Release_Number, "
-                "[No Of Containers], [Tracking Status],\n"
-                "   plus 4 location milestones (Pre-POL, POL, POD, Post-POD) each with: "
-                "City, State, Country, [Country Code], Latitude, Longitude, LOCode, Date, isActual.\n"
-                "   Column naming pattern: [Pre-POL City], [POL Latitude], [POD Date], [Post-POD isActual], etc.\n"
-                "   Occurred columns: [Pre-POL Occurred], [POL Occurred], [POD Occurred], [Post-POD Occurred] — 'Yes'/'No' indicating if tracking reached that milestone.\n"
-                "   [Tracking Status] values: 'Pending Departure', 'Departed from Origin', 'Arrived Destination', 'Delivered'.\n"
-                "   No DeletedDt column — no soft-delete filter needed.\n\n"
-                "2. Sealine_Container_Event (PK: TrackNumber + [Container Name] + [Event Sequence ID]) — container events.\n"
-                "   Columns: TrackNumber, [Container Name], [Container ISO Code], [Container Size Type], "
-                "[Event Sequence ID], [Location Name], [Location Country Code], [Location LOCode], "
-                "[Location Latitude], [Location Longitude], [Event Description], [Event Type], [Event Code], "
-                "[Event Status], [Event Date], [Event Date isActual], [Transport Type], [Vessel Name], "
-                "[Vessel Voyage], [Location Type], [Event Ocurred].\n"
-                "   [Location Type] values: 'Pre-POL', 'POL', 'POD', 'Post-POD' or comma combinations.\n"
-                "   [Event Ocurred] values: 'Yes' (event happened), 'No' (not yet happened).\n"
-                "   No DeletedDt column — no soft-delete filter needed.\n\n"
-                "CRITICAL — NO OTHER TABLES EXIST. Do NOT reference Sealine_Header, Sealine_Route, "
-                "Sealine_Locations, Sealine_Container, Sealine_Facilities, or any views.\n\n"
-                "CRITICAL — Map route data:\n"
-                "Tracking route maps use data unpivoted from Sealine_Tracking (Pre-POL/POL/POD/Post-POD columns). "
-                "Container route maps use data aggregated from Sealine_Container_Event grouped by container + location. "
-                "These are handled internally by the show_tracking_routes and show_container_routes tools — "
-                "do NOT query route data manually for map generation."
-            )
-        tool_instructions.append(
-            "You can generate charts with `generate_plot`, PDF reports with "
-            "`generate_pdf`, and Excel spreadsheets with `generate_excel`. "
-            "Use these tools when the user asks for visualizations or downloadable files."
-        )
-
-        base = self.system_prompt + "\n\n" + "\n".join(tool_instructions)
-
-        base += (
-            "\n\nAUTO-DETECT: Tracking Number and Container Number Lookups\n"
-            "When the user enters a single word with NO hyphen (e.g. '00010987', '038VH1276706'), "
-            "treat it as a TrackNumber and perform a TRACKING STATUS lookup:\n"
-            "  1. Query Sealine_Tracking for this TrackNumber. Show header info with EXPANDED status:\n"
-            "     - Derive status from [Tracking Status] column. If 'Departed from Origin', show sub-status:\n"
-            "       * 'In Transit (Pending Departure)' — [POL isActual]=0\n"
-            "       * 'In Transit (Departed)' — [POL isActual]=1 but [POD isActual]=0\n"
-            "       * 'In Transit (Arrived)' — [POD isActual]=1\n"
-            "  2. Generate a tracking route map using show_tracking_routes.\n"
-            "  3. STOP HERE. Do NOT query containers, "
-            "do NOT show any route detail tables, do NOT generate container maps. "
-            "ONLY show the header info and the tracking route map.\n"
-            "  4. At the END of your response, add a 'Follow-up options' section with these clickable options:\n"
-            "     - **List all containers for this tracking.**\n"
-            "     - **Show me the details of tracking route.**\n"
-            "     - **Show me the containers route on the map.**\n"
-            "     - **Show me the container searoute (ocean way) route on the map.**\n"
-            "     Present them as a numbered list so the user can pick one.\n"
-            "  5. When the user picks a follow-up:\n"
-            "     - 'List all containers': SELECT DISTINCT [Container Name], [Container ISO Code], [Container Size Type] FROM Sealine_Container_Event WHERE TrackNumber='...'. Title: '<N> container(s) in this shipment'.\n"
-            "     - 'details of tracking route': Query Sealine_Tracking for this TrackNumber. Show Pre-POL/POL/POD/Post-POD cities, dates, and isActual status.\n"
-            "     - 'containers route on the map': Generate container route map using show_container_routes.\n"
-            "     - 'container searoute': Generate container searoute map using show_container_searoute.\n\n"
-            "When the user enters a word WITH a hyphen (e.g. '038NY1332530-TRHU7525920'), "
-            "treat it as a Container_NUMBER and perform a CONTAINER STATUS lookup:\n"
-            "  1. The string before the LAST hyphen is the TrackNumber (e.g. '038NY1332530').\n"
-            "  2. Query Sealine_Tracking for the TrackNumber. Show header info with expanded status (same rules as above).\n"
-            "  3. Show container details: [Container Name], [Container ISO Code], [Container Size Type] from Sealine_Container_Event (use DISTINCT).\n"
-            "  4. Show all container events from Sealine_Container_Event WHERE [Container Name]='...' ORDER BY [Event Sequence ID] ASC.\n"
-            "  5. Generate a container searoute map using show_container_searoute with this container_number.\n\n"
-        )
-
-        base += (
-            "IMPORTANT — Data Insights in Every Response:\n"
-            "After answering the user's question, ALWAYS add a brief 'Insights' section with "
-            "data-driven observations. Include trends, anomalies, comparisons, or business context. "
-            "For example:\n"
-            "  - If showing shipment counts, note if the number is higher/lower than typical, "
-            "or compare across regions/time periods.\n"
-            "  - If listing tracking numbers, highlight patterns (e.g., concentration in certain routes, "
-            "carriers, or unusual timing).\n"
-            "  - If showing routes on a map, note the dominant shipping lanes, transit times, "
-            "or geographic patterns.\n"
-            "  - Point out anything that looks unusual or noteworthy in the data.\n"
-            "Also include summary statistics where applicable — counts, averages, min/max, "
-            "percentages, or distributions that help quantify the data.\n"
-            "Keep insights concise (2-5 bullet points) but meaningful. "
-            "Do NOT skip this section — every response should provide analytical value beyond the raw data."
-        )
+        base = self.system_prompt
 
         if self.docs_text:
             base += (
@@ -1011,7 +930,7 @@ class SealineAgent:
                         trk_containers[trk] = 0
 
                 # Parse events — delimited by <BR> (case-insensitive)
-                events = [e.strip() for e in _re.split(r'<BR>', events_raw, flags=_re.IGNORECASE) if e.strip()]
+                events = [e.strip() for e in events_raw.split('\n') if e.strip()]
 
                 # Unique location key (rounded to avoid float noise)
                 loc_key = (round(lat, 5), round(lon, 5))
@@ -1196,7 +1115,7 @@ class SealineAgent:
                     except (ValueError, TypeError):
                         trk_containers[trk] = 0
 
-                events = [e.strip() for e in _re.split(r'<BR>', events_raw, flags=_re.IGNORECASE) if e.strip()]
+                events = [e.strip() for e in events_raw.split('\n') if e.strip()]
 
                 loc_key = (round(lat, 5), round(lon, 5))
                 if loc_key not in loc_index:
@@ -1416,7 +1335,7 @@ class SealineAgent:
                 except (ValueError, IndexError, TypeError):
                     continue
 
-                events = [e.strip() for e in _re.split(r'<BR>', evraw, flags=_re.IGNORECASE) if e.strip()]
+                events = [e.strip() for e in evraw.split('\n') if e.strip()]
 
                 # Fix container number if database returns duplicate TrackNumber prefix
                 # Example: "038VH9465510-038VH9465510-CAIU7249126" → "038VH9465510-CAIU7249126"
@@ -1616,7 +1535,7 @@ class SealineAgent:
                 except (ValueError, IndexError, TypeError):
                     continue
 
-                events = [e.strip() for e in _re.split(r'<BR>', evraw, flags=_re.IGNORECASE) if e.strip()]
+                events = [e.strip() for e in evraw.split('\n') if e.strip()]
 
                 # Fix container number if database returns duplicate TrackNumber prefix
                 parts = cnum.split('-')
@@ -1947,6 +1866,89 @@ class SealineAgent:
             return msg
 
     # ------------------------------------------------------------------
+    #  Claude message format conversion helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _openai_tools_to_claude(tools: list[dict]) -> list[dict]:
+        """Convert OpenAI function-calling tools to Claude tool format."""
+        claude_tools = []
+        for t in tools:
+            fn = t.get("function", {})
+            claude_tools.append({
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "input_schema": fn.get("parameters", {}),
+            })
+        return claude_tools
+
+    @staticmethod
+    def _openai_messages_to_claude(messages: list[dict]) -> list[dict]:
+        """Convert OpenAI message history to Claude format.
+
+        Key differences:
+        - System messages are removed (passed separately to Claude)
+        - Assistant tool_calls → assistant content blocks with type:"tool_use"
+        - Tool result messages → user content blocks with type:"tool_result"
+        - Consecutive tool results are merged into a single user message
+        """
+        claude_msgs: list[dict] = []
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+            role = msg.get("role", "")
+
+            if role == "system":
+                i += 1
+                continue
+
+            if role == "user":
+                content = msg.get("content", "")
+                claude_msgs.append({"role": "user", "content": content})
+                i += 1
+                continue
+
+            if role == "assistant":
+                content_blocks: list[dict] = []
+                text = msg.get("content")
+                if text:
+                    content_blocks.append({"type": "text", "text": text})
+                for tc in msg.get("tool_calls", []):
+                    fn = tc.get("function", {})
+                    try:
+                        args = json.loads(fn.get("arguments", "{}"))
+                    except json.JSONDecodeError:
+                        args = {}
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id", ""),
+                        "name": fn.get("name", ""),
+                        "input": args,
+                    })
+                claude_msgs.append({"role": "assistant", "content": content_blocks})
+                i += 1
+                continue
+
+            if role == "tool":
+                # Collect consecutive tool results into one user message
+                tool_results: list[dict] = []
+                while i < len(messages) and messages[i].get("role") == "tool":
+                    tmsg = messages[i]
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tmsg.get("tool_call_id", ""),
+                        "content": tmsg.get("content", ""),
+                    })
+                    i += 1
+                claude_msgs.append({"role": "user", "content": tool_results})
+                continue
+
+            # Unknown role — skip
+            i += 1
+
+        return claude_msgs
+
+    # ------------------------------------------------------------------
     #  send_message — streaming generator
     # ------------------------------------------------------------------
 
@@ -1984,126 +1986,212 @@ class SealineAgent:
                 break
 
             try:
-                # Build OpenAI messages: system + conversation history
-                openai_messages = [{"role": "system", "content": sys_content}] + self.messages
+                if self.provider == "claude":
+                    # ── Claude / Anthropic path ──
+                    claude_tools = self._openai_tools_to_claude(tools)
+                    claude_msgs = self._openai_messages_to_claude(self.messages)
 
-                stream = self.client.chat.completions.create(
-                    model=self.model,
-                    max_tokens=self.max_tokens,
-                    messages=openai_messages,
-                    tools=tools if tools else None,
-                    stream=True,
-                    stream_options={"include_usage": True},
-                )
+                    collected_text = ""
+                    tool_calls: list[dict] = []
+                    usage_prompt = 0
+                    usage_completion = 0
 
-                # Collect streamed response
-                collected_text = ""
-                tool_calls_by_index: dict[int, dict] = {}
-                finish_reason = None
-                usage_prompt = 0
-                usage_completion = 0
+                    with self.client.messages.stream(
+                        model=self.model,
+                        max_tokens=self.max_tokens,
+                        system=sys_content,
+                        messages=claude_msgs,
+                        tools=claude_tools if claude_tools else [],
+                    ) as stream:
+                        for event in stream:
+                            if event.type == "content_block_start":
+                                if hasattr(event, "content_block"):
+                                    cb = event.content_block
+                                    if cb.type == "tool_use":
+                                        tool_calls.append({
+                                            "id": cb.id,
+                                            "name": cb.name,
+                                            "arguments": "",
+                                        })
+                            elif event.type == "content_block_delta":
+                                delta = event.delta
+                                if delta.type == "text_delta":
+                                    collected_text += delta.text
+                                    yield _sse("text_delta", {"delta": delta.text})
+                                elif delta.type == "input_json_delta":
+                                    if tool_calls:
+                                        tool_calls[-1]["arguments"] += delta.partial_json
 
-                for chunk in stream:
-                    if chunk.usage:
-                        usage_prompt = chunk.usage.prompt_tokens or 0
-                        usage_completion = chunk.usage.completion_tokens or 0
+                        # Get final message for usage
+                        final_message = stream.get_final_message()
+                        usage_prompt = final_message.usage.input_tokens
+                        usage_completion = final_message.usage.output_tokens
+                        stop_reason = final_message.stop_reason
 
-                    if not chunk.choices:
+                    # Accumulate token usage
+                    msg_input_tokens += usage_prompt
+                    msg_output_tokens += usage_completion
+                    self.total_input_tokens += usage_prompt
+                    self.total_output_tokens += usage_completion
+
+                    # Build assistant message in OpenAI format for history
+                    assistant_msg: dict = {"role": "assistant"}
+                    assistant_msg["content"] = collected_text or None
+
+                    if tool_calls:
+                        assistant_msg["tool_calls"] = [
+                            {
+                                "id": tc["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": tc["name"],
+                                    "arguments": tc["arguments"],
+                                },
+                            }
+                            for tc in tool_calls
+                        ]
+
+                    self.messages.append(assistant_msg)
+
+                    # ---- Tool use ----
+                    if stop_reason == "tool_use" and tool_calls:
+                        for tc in tool_calls:
+                            tool_name = tc["name"]
+                            try:
+                                tool_input = json.loads(tc["arguments"])
+                            except json.JSONDecodeError:
+                                tool_input = {}
+
+                            gen = self._execute_tool(tool_name, tool_input)
+                            result_text = ""
+                            try:
+                                while True:
+                                    yield next(gen)
+                            except StopIteration as stop:
+                                result_text = stop.value or ""
+
+                            self.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": result_text,
+                            })
+
                         continue
 
-                    choice = chunk.choices[0]
-                    finish_reason = choice.finish_reason or finish_reason
-                    delta = choice.delta
+                    # ---- end_turn or other terminal reason ----
+                    break
 
-                    # Stream text content
-                    if delta and delta.content:
-                        collected_text += delta.content
-                        yield _sse("text_delta", {"delta": delta.content})
-
-                    # Accumulate tool calls
-                    if delta and delta.tool_calls:
-                        for tc in delta.tool_calls:
-                            idx = tc.index
-                            if idx not in tool_calls_by_index:
-                                tool_calls_by_index[idx] = {
-                                    "id": tc.id or "",
-                                    "name": "",
-                                    "arguments": "",
-                                }
-                            entry = tool_calls_by_index[idx]
-                            if tc.id:
-                                entry["id"] = tc.id
-                            if tc.function and tc.function.name:
-                                entry["name"] = tc.function.name
-                            if tc.function and tc.function.arguments:
-                                entry["arguments"] += tc.function.arguments
-
-                # Accumulate token usage
-                msg_input_tokens += usage_prompt
-                msg_output_tokens += usage_completion
-                self.total_input_tokens += usage_prompt
-                self.total_output_tokens += usage_completion
-
-                # Build assistant message for history
-                assistant_msg: dict = {"role": "assistant"}
-                if collected_text:
-                    assistant_msg["content"] = collected_text
                 else:
-                    assistant_msg["content"] = None
+                    # ── OpenAI / Azure OpenAI path ──
+                    openai_messages = [{"role": "system", "content": sys_content}] + self.messages
 
-                if tool_calls_by_index:
-                    assistant_msg["tool_calls"] = [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": tc["arguments"],
-                            },
-                        }
-                        for tc in sorted(tool_calls_by_index.values(), key=lambda x: x["id"])
-                    ]
+                    stream = self.client.chat.completions.create(
+                        model=self.model,
+                        max_tokens=self.max_tokens,
+                        messages=openai_messages,
+                        tools=tools if tools else None,
+                        stream=True,
+                        stream_options={"include_usage": True},
+                    )
 
-                self.messages.append(assistant_msg)
+                    collected_text = ""
+                    tool_calls_by_index: dict[int, dict] = {}
+                    finish_reason = None
+                    usage_prompt = 0
+                    usage_completion = 0
 
-                # ---- Tool use ----
-                if finish_reason == "tool_calls" and tool_calls_by_index:
-                    for tc in sorted(tool_calls_by_index.values(), key=lambda x: x["id"]):
-                        tool_name = tc["name"]
-                        try:
-                            tool_input = json.loads(tc["arguments"])
-                        except json.JSONDecodeError:
-                            tool_input = {}
+                    for chunk in stream:
+                        if chunk.usage:
+                            usage_prompt = chunk.usage.prompt_tokens or 0
+                            usage_completion = chunk.usage.completion_tokens or 0
 
-                        gen = self._execute_tool(tool_name, tool_input)
-                        result_text = ""
-                        try:
-                            while True:
-                                yield next(gen)
-                        except StopIteration as stop:
-                            result_text = stop.value or ""
+                        if not chunk.choices:
+                            continue
 
-                        self.messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": result_text,
-                        })
+                        choice = chunk.choices[0]
+                        finish_reason = choice.finish_reason or finish_reason
+                        delta = choice.delta
 
-                    continue
+                        if delta and delta.content:
+                            collected_text += delta.content
+                            yield _sse("text_delta", {"delta": delta.content})
 
-                # ---- stop or other terminal reason ----
-                break
+                        if delta and delta.tool_calls:
+                            for tc in delta.tool_calls:
+                                idx = tc.index
+                                if idx not in tool_calls_by_index:
+                                    tool_calls_by_index[idx] = {
+                                        "id": tc.id or "",
+                                        "name": "",
+                                        "arguments": "",
+                                    }
+                                entry = tool_calls_by_index[idx]
+                                if tc.id:
+                                    entry["id"] = tc.id
+                                if tc.function and tc.function.name:
+                                    entry["name"] = tc.function.name
+                                if tc.function and tc.function.arguments:
+                                    entry["arguments"] += tc.function.arguments
+
+                    msg_input_tokens += usage_prompt
+                    msg_output_tokens += usage_completion
+                    self.total_input_tokens += usage_prompt
+                    self.total_output_tokens += usage_completion
+
+                    assistant_msg: dict = {"role": "assistant"}
+                    assistant_msg["content"] = collected_text or None
+
+                    if tool_calls_by_index:
+                        assistant_msg["tool_calls"] = [
+                            {
+                                "id": tc["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": tc["name"],
+                                    "arguments": tc["arguments"],
+                                },
+                            }
+                            for tc in sorted(tool_calls_by_index.values(), key=lambda x: x["id"])
+                        ]
+
+                    self.messages.append(assistant_msg)
+
+                    if finish_reason == "tool_calls" and tool_calls_by_index:
+                        for tc in sorted(tool_calls_by_index.values(), key=lambda x: x["id"]):
+                            tool_name = tc["name"]
+                            try:
+                                tool_input = json.loads(tc["arguments"])
+                            except json.JSONDecodeError:
+                                tool_input = {}
+
+                            gen = self._execute_tool(tool_name, tool_input)
+                            result_text = ""
+                            try:
+                                while True:
+                                    yield next(gen)
+                            except StopIteration as stop:
+                                result_text = stop.value or ""
+
+                            self.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": result_text,
+                            })
+
+                        continue
+
+                    break
 
             except AuthenticationError as exc:
-                logger.error("Azure OpenAI authentication error: %s", exc)
+                logger.error("API authentication error: %s", exc)
                 yield _sse("error", {
-                    "error": "Azure OpenAI API authentication failed. Check AZURE_OPENAI_API_KEY.",
+                    "error": "API authentication failed. Check your API key.",
                     "code": "AUTH_ERROR",
                     "recoverable": False,
                 })
                 break
             except RateLimitError as exc:
-                logger.warning("Azure OpenAI rate limit: %s", exc)
+                logger.warning("API rate limit: %s", exc)
                 yield _sse("error", {
                     "error": "Rate limit reached. Please wait a moment and try again.",
                     "code": "RATE_LIMITED",
@@ -2111,7 +2199,7 @@ class SealineAgent:
                 })
                 break
             except APIConnectionError as exc:
-                logger.error("Azure OpenAI connection error: %s", exc)
+                logger.error("API connection error: %s", exc)
                 yield _sse("error", {
                     "error": "Could not connect to the AI service. Please try again shortly.",
                     "code": "CONNECTION_ERROR",
@@ -2119,10 +2207,10 @@ class SealineAgent:
                 })
                 break
             except APIError as exc:
-                logger.error("Azure OpenAI API error %s: %s", exc.status_code, exc.message)
+                logger.error("API error %s: %s", exc.status_code, exc.message)
                 yield _sse("error", {
                     "error": "The AI service returned an error. Please try again.",
-                    "code": "OPENAI_API_ERROR",
+                    "code": "API_ERROR",
                     "recoverable": False,
                 })
                 break

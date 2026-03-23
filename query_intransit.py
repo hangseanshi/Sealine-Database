@@ -21,7 +21,7 @@ WITH LatestActualEvents AS (
         ) AS rn
     FROM Sealine_Container_Event e
     INNER JOIN Sealine_Tracking t ON e.TrackNumber = t.TrackNumber
-    WHERE e.[Event Ocurred] = 'Yes'
+    WHERE e.[Event Occurred] = 'Yes'
       AND t.[Tracking Status] IN ('Pending Departure', 'Departed from Origin')
       AND t.Sealine_Code <> 'DHC2'
 ),

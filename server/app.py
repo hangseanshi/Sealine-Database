@@ -29,7 +29,7 @@ load_dotenv(os.path.join(_project_root, ".env"), override=True)
 from flask import Flask, send_from_directory
 
 from server.config import get_config
-from server.core.context_loader import load_md_files
+from server.core.context_loader import load_md_files, load_single_md
 from server.sessions.store import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,13 @@ def create_app() -> Flask:
         )
         memory_dir = os.path.join(project_root, memory_dir)
 
-    context_text, context_files = load_md_files(memory_dir)
+    # Load system prompt from dedicated file
+    system_prompt_path = os.path.join(memory_dir, "system_prompt.md")
+    system_prompt_text = load_single_md(system_prompt_path)
+    logger.info("Loaded system prompt from %s (%d chars)", system_prompt_path, len(system_prompt_text))
+
+    # Load reference docs, excluding the system prompt file
+    context_text, context_files = load_md_files(memory_dir, exclude=["system_prompt.md"])
     logger.info(
         "Loaded %d context file(s) from %s", len(context_files), memory_dir
     )
@@ -100,6 +106,7 @@ def create_app() -> Flask:
 
     # Direct attributes on app (routes access these via current_app.*)
     app.session_store = session_store
+    app.system_prompt_text = system_prompt_text
     app.docs_text = context_text
     app.docs_files = context_files
     app.config_obj = cfg

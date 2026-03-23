@@ -19,6 +19,9 @@ class Config:
         self.HOST: str = os.environ.get("HOST", "0.0.0.0")
         self.WORKERS: int = int(os.environ.get("WORKERS", "2"))
 
+        # --- AI Provider ---
+        self.AI_PROVIDER: str = os.environ.get("AI_PROVIDER", "openai").lower()
+
         # --- Azure OpenAI ---
         self.AZURE_OPENAI_ENDPOINT: str = os.environ.get(
             "AZURE_OPENAI_ENDPOINT",
@@ -31,7 +34,16 @@ class Config:
         self.AZURE_OPENAI_API_VERSION: str = os.environ.get(
             "AZURE_OPENAI_API_VERSION", "2024-10-21"
         )
-        self.MODEL: str = self.AZURE_OPENAI_DEPLOYMENT
+
+        # --- Anthropic / Claude ---
+        self.ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
+        self.CLAUDE_MODEL: str = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+
+        # --- Model (resolved from provider) ---
+        if self.AI_PROVIDER == "claude":
+            self.MODEL: str = self.CLAUDE_MODEL
+        else:
+            self.MODEL: str = self.AZURE_OPENAI_DEPLOYMENT
         self.MAX_TOKENS: int = int(os.environ.get("MAX_TOKENS", "8192"))
 
         # --- Database ---
