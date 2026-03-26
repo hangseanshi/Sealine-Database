@@ -4,6 +4,15 @@ __pycache__/
 *.pyc
 .pytest_cache/
 server/tmp/
+tmp/
 *.egg-info/
 dist/
 venv/
+
+# Generated files
+*.jsonl
+*.pdf
+*.xlsx
+*.docx
+*.pptx
+*.html

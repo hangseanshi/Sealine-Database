@@ -777,9 +777,10 @@ class SealineAgent:
                         yield _sse("error", {"error": error_msg, "code": "PLOT_ERROR", "recoverable": True})
                         return error_msg
                     self.generated_files.append(file_info)
+                    file_type = file_info.get("file_type", "")
                     event_type = (
                         "plot_generated"
-                        if file_info.get("file_type", "").startswith("image/")
+                        if file_type.startswith("image/") or file_type == "text/html"
                         else "file_generated"
                     )
                     yield _sse(event_type, file_info)

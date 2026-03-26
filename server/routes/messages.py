@@ -32,6 +32,53 @@ def _sse_line(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _select_skills(message: str, skill_texts: dict) -> str:
+    """
+    Classify the user message and select only relevant skill files.
+
+    Returns a concatenated string of selected skill file contents, or empty
+    string if no skills match (in which case only base docs are used).
+    """
+    if not skill_texts:
+        return ""
+
+    msg = message.lower()
+    selected = []
+
+    # SQL dialect — data/count/list queries
+    sql_triggers = [
+        "how many", "list", "count", "top ", "group by", "report",
+        "number of", "total", "average", "sum", "which tracking",
+        "between", "where", "select", "percentage", "breakdown"
+    ]
+    if any(t in msg for t in sql_triggers):
+        selected.append(skill_texts.get("sql", ""))
+
+    # Map tools — any map/route/location/visualisation
+    map_triggers = [
+        "map", "route", "location", "port", "show me", "where is",
+        "in the map", "on the map", "shaded", "choropleth",
+        "highlight", "war zone", "container route", "tracking route",
+        "visuali"
+    ]
+    if any(t in msg for t in map_triggers):
+        selected.append(skill_texts.get("map", ""))
+
+    # Auto-detect — bare tracking/container number, or explicit mention
+    words = msg.strip().split()
+    is_bare_id = len(words) == 1 and (words[0][0].isdigit() or words[0][0].isalpha())
+    detect_triggers = ["tracking", "container", "-"]
+    if is_bare_id or any(t in msg for t in detect_triggers):
+        selected.append(skill_texts.get("detect", ""))
+
+    # Output format — always included (formatting rules apply to every response)
+    selected.append(skill_texts.get("output", ""))
+
+    # Filter out empty strings and join
+    selected = [s for s in selected if s]
+    return "\n\n---\n\n".join(selected) if selected else ""
+
+
 # --------------------------------------------------------------------------- #
 #  POST /api/sessions/<session_id>/messages
 # --------------------------------------------------------------------------- #
@@ -94,8 +141,9 @@ def send_message(session_id: str):
     # ---------------------------------------------------------------------- #
     cfg = current_app.config_obj
     system_prompt_text = current_app.system_prompt_text
-    docs_text = current_app.docs_text
+    base_docs_text = current_app.docs_text
     docs_files = current_app.docs_files
+    skill_texts = current_app.skill_texts
 
     # Determine whether the database tool is available.
     try:
@@ -127,11 +175,17 @@ def send_message(session_id: str):
         })
 
         try:
+            # Select only relevant skills for this message to reduce tokens
+            skill_context = _select_skills(message, skill_texts)
+            filtered_docs = base_docs_text
+            if skill_context:
+                filtered_docs += "\n\n---\n\n" + skill_context
+
             agent = SealineAgent(
                 model=cfg.MODEL,
                 system_prompt=system_prompt_text,
                 max_tokens=cfg.MAX_TOKENS,
-                docs_text=docs_text,
+                docs_text=filtered_docs,
                 docs_files=docs_files,
                 db_enabled=db_enabled,
                 session_id=session_id,

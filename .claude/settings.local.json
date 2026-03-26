@@ -7,7 +7,8 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(python:*)",
       "Bash(npm run:*)",
-      "Bash(find /c/git/sealine-database-OpenAI -type f -name .env*)"
+      "Bash(find /c/git/sealine-database-OpenAI -type f -name .env*)",
+      "Bash(AI_PROVIDER=openai python -m flask --app server.app run --port 8080)"
     ]
   }
 }

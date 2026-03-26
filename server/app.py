@@ -90,11 +90,29 @@ def create_app() -> Flask:
     system_prompt_text = load_single_md(system_prompt_path)
     logger.info("Loaded system prompt from %s (%d chars)", system_prompt_path, len(system_prompt_text))
 
-    # Load reference docs, excluding the system prompt file
-    context_text, context_files = load_md_files(memory_dir, exclude=["system_prompt.md"])
+    # Load reference docs, excluding the system prompt file and skills subdirectory
+    context_text, context_files = load_md_files(memory_dir, exclude=["system_prompt.md", "skills"])
     logger.info(
         "Loaded %d context file(s) from %s", len(context_files), memory_dir
     )
+
+    # Load individual skill files for conditional loading
+    skills_dir = os.path.join(memory_dir, "skills")
+    SKILL_NAMES = {
+        "sql":    "skill_sql_dialect.md",
+        "map":    "skill_map_tools.md",
+        "detect": "skill_autodetect.md",
+        "output": "skill_output_format.md",
+    }
+    skill_texts = {}
+    for name, fname in SKILL_NAMES.items():
+        skill_path = os.path.join(skills_dir, fname)
+        skill_content = load_single_md(skill_path)
+        if skill_content:
+            skill_texts[name] = skill_content
+            logger.info("Loaded skill file: %s (%d chars)", fname, len(skill_content))
+        else:
+            logger.warning("Skill file not found or empty: %s", fname)
 
     # --- Store shared resources on app for access by routes ---
     # Flask config dict (standard pattern)
@@ -109,6 +127,7 @@ def create_app() -> Flask:
     app.system_prompt_text = system_prompt_text
     app.docs_text = context_text
     app.docs_files = context_files
+    app.skill_texts = skill_texts  # ← skill files for conditional loading
     app.config_obj = cfg
     cfg.FILE_STORE_PATH = file_store_path
 

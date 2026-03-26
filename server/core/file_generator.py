@@ -52,11 +52,11 @@ def _to_openai_tool(name: str, description: str, input_schema: dict) -> dict:
 GENERATE_PLOT_TOOL: dict[str, Any] = _to_openai_tool(
     "generate_plot",
     (
-        "Generate a 3D interactive chart or plot from data. Supports bar (3D prisms), bar_stacked (3D stacked prisms), "
-        "line (3D lines), scatter (3D points), pie (3D cylindrical), heatmap (3D surface), histogram (3D prisms), "
-        "and map (interactive geographic map with OpenStreetMap tiles). All chart types except map automatically "
-        "render as 3D Plotly visualizations. ALWAYS use plot_type='map' with interactive=true when "
-        "displaying geographic/location data with latitude and longitude coordinates."
+        "Generate a chart or plot from data. Supports bar, bar_stacked (grouped series), line, scatter, pie, "
+        "heatmap, histogram, and map (interactive geographic map with OpenStreetMap "
+        "tiles) chart types. ALWAYS use plot_type='map' with interactive=true when "
+        "displaying geographic/location data with latitude and longitude coordinates. "
+        "Use matplotlib for static charts or Leaflet.js for interactive maps / Plotly for interactive charts."
     ),
     {
         "type": "object",
@@ -76,13 +76,11 @@ GENERATE_PLOT_TOOL: dict[str, Any] = _to_openai_tool(
                 "type": "object",
                 "description": (
                     "Chart data as JSON. "
-                    'For bar: {"labels": [...], "values": [...]}. '
-                    'For line: {"x": [...], "y": [...], "z": [...]|optional}. '
+                    'For bar/line/histogram: {"labels": [...], "values": [...]}. '
                     'For bar_stacked: {"labels": [...], "series": [{"name": "SeriesA", "values": [...]}, {"name": "SeriesB", "values": [...]}]}. '
-                    'For scatter: {"x": [...], "y": [...], "z": [...]|optional, "labels": [...]}. '
+                    'For scatter: {"x": [...], "y": [...]}. '
                     'For pie: {"labels": [...], "values": [...]}. '
                     'For heatmap: {"labels_x": [...], "labels_y": [...], "values": [[...]]}. '
-                    'For histogram: {"values": [...]}. '
                     'For map with a SINGLE route: {"lat": [...], "lon": [...], "labels": [...], '
                     '"values": [...], "sizes": [...], "arrows": true/false, '
                     '"connections": [[from_idx, to_idx], ...]} '
@@ -331,10 +329,6 @@ def generate_plot(
     ensure_file_store(file_store_path)
     file_id = _short_uuid()
     title_slug = _slugify(title)
-
-    # 3D chart types always require interactive rendering
-    if plot_type in ("scatter", "line", "heatmap", "pie", "bar", "bar_stacked", "histogram"):
-        interactive = True
 
     try:
         if interactive:
@@ -819,8 +813,8 @@ MAP_DATA.routes.forEach(function(route) {
     var tip;
     if (!MAP_DATA.hide_route_tracking) {
       // Tracking route map — label segments: [TrackNumber, Location/Country (LOCode), RouteType, Date, ...]
-      var fromSegs = (labels[fi] || '').split(/<br\s*\/?>/i);
-      var toSegs   = (labels[ti] || '').split(/<br\s*\/?>/i);
+      var fromSegs = (labels[fi] || '').split(/<br\\s*\\/?>/i);
+      var toSegs   = (labels[ti] || '').split(/<br\\s*\\/?>/i);
       var fromLoc  = (fromSegs[1] || '?').replace(/<[^>]+>/g, '').trim();
       var toLoc    = (toSegs[1]   || '?').replace(/<[^>]+>/g, '').trim();
       var fromType = (fromSegs[2] || '').replace(/<[^>]+>/g, '').trim().toUpperCase();
@@ -3529,33 +3523,6 @@ def _plot_leaflet_map(
 
 # -- interactive (plotly) ---------------------------------------------------
 
-def _make_bar_prism(x0: float, x1: float, y0: float, y1: float,
-                    z0: float, z1: float, color: str,
-                    name: str | None, hover: str) -> "go.Mesh3d":  # type: ignore[name-defined]
-    """Create a 3D rectangular prism (bar) for Mesh3d."""
-    try:
-        import plotly.graph_objects as go  # type: ignore[import-untyped]
-    except ImportError:
-        raise ImportError("plotly is not installed")
-
-    vx = [x0, x1, x1, x0, x0, x1, x1, x0]
-    vy = [y0, y0, y1, y1, y0, y0, y1, y1]
-    vz = [z0, z0, z0, z0, z1, z1, z1, z1]
-
-    # 12 triangles (2 per face × 6 faces)
-    i_ = [0, 0, 1, 1, 4, 4, 5, 5, 0, 0, 3, 3]
-    j_ = [1, 3, 2, 5, 5, 7, 6, 4, 4, 7, 2, 6]
-    k_ = [2, 4, 6, 4, 6, 3, 7, 0, 7, 3, 1, 7]
-
-    return go.Mesh3d(
-        x=vx, y=vy, z=vz,
-        i=i_, j=j_, k=k_,
-        color=color, opacity=0.9,
-        name=name if name else "",
-        showlegend=bool(name),
-        hovertemplate=hover
-    )
-
 
 def _plot_interactive(
     plot_type: str,
@@ -3579,57 +3546,22 @@ def _plot_interactive(
     fig: go.Figure | None = None
 
     if plot_type == "bar":
-        spacing, width, depth = 1.2, 0.8, 0.5
-        fig = go.Figure()
-        for i, (lbl, val) in enumerate(zip(labels, values)):
-            x0 = i * spacing
-            hover = f"<b>{lbl}</b><br>Value: {val}<extra></extra>"
-            fig.add_trace(_make_bar_prism(x0, x0 + width, 0, depth, 0, val,
-                                         HEADER_COLOR_HEX, lbl, hover))
-
-        fig.update_layout(
-            scene=dict(
-                xaxis=dict(tickvals=[i * spacing + 0.4 for i in range(len(labels))],
-                          ticktext=labels, title=x_label or ""),
-                yaxis=dict(visible=False),
-                zaxis_title=y_label or "Value"
-            ),
-            showlegend=False
+        fig = go.Figure(
+            data=[go.Bar(x=labels, y=values, marker_color=HEADER_COLOR_HEX)]
         )
 
     elif plot_type == "line":
-        x = data.get("x", labels if labels else [])
-        y = data.get("y", values if values else [])
-        z = data.get("z", list(range(len(y))) if y else [])
         fig = go.Figure(
-            data=[go.Scatter3d(x=x, y=y, z=z, mode="lines+markers",
-                               line=dict(color=HEADER_COLOR_HEX, width=4),
-                               marker=dict(size=4))]
-        )
-        fig.update_layout(
-            scene=dict(
-                xaxis_title=x_label or "X",
-                yaxis_title=y_label or "Y",
-                zaxis_title="Z"
-            )
+            data=[go.Scatter(x=labels, y=values, mode="lines+markers",
+                             line=dict(color=HEADER_COLOR_HEX))]
         )
 
     elif plot_type == "scatter":
         x = data.get("x", [])
         y = data.get("y", [])
-        z = data.get("z", [])
-        text = data.get("labels", None)
         fig = go.Figure(
-            data=[go.Scatter3d(x=x, y=y, z=z, text=text, mode="markers",
-                               marker=dict(size=5, color=z if z else y,
-                                         colorscale="Blues", opacity=0.8))]
-        )
-        fig.update_layout(
-            scene=dict(
-                xaxis_title=x_label or "X",
-                yaxis_title=y_label or "Y",
-                zaxis_title="Z"
-            )
+            data=[go.Scatter(x=x, y=y, mode="markers",
+                             marker=dict(color=HEADER_COLOR_HEX, opacity=0.7))]
         )
 
     elif plot_type == "pie":
@@ -3641,119 +3573,21 @@ def _plot_interactive(
             _paired = sorted(zip(_vals, _lbls), reverse=True)
             _vals  = [v for v, _ in _paired[:PIE_MAX - 1]] + [sum(v for v, _ in _paired[PIE_MAX - 1:])]
             _lbls  = [l for _, l in _paired[:PIE_MAX - 1]] + ["Other"]
-
-        # Build 3D cylindrical pie using Mesh3d
-        PALETTE = [
-            "#1F4788","#2E75B6","#4472C4","#5B9BD5","#70AD47",
-            "#ED7D31","#FFC000","#FF0000","#7030A0","#00B050",
-            "#C00000","#0070C0","#00B0F0","#92D050","#FF7070",
-            "#FFD966","#A9D18E","#BDD7EE","#D6DCE4","#F4B942"
-        ]
-        depth = 0.25  # cylinder height
-        n_pts = 60    # arc smoothness
-        total = sum(_vals) or 1
-        angle = 0.0
-
-        fig = go.Figure()
-        for i, (lbl, val) in enumerate(zip(_lbls, _vals)):
-            frac = val / total
-            end_angle = angle + frac * 2 * np.pi
-            theta = np.linspace(angle, end_angle, n_pts)
-
-            # Build vertices for bottom and top rings
-            xb = np.cos(theta).tolist() + [0.0]
-            yb = np.sin(theta).tolist() + [0.0]
-            xt = xb[:]
-            yt = yb[:]
-            zb = [0.0] * (n_pts + 1)
-            zt = [depth] * (n_pts + 1)
-
-            x_all = xb + xt
-            y_all = yb + yt
-            z_all = zb + zt
-
-            # Triangulate: 2 fans (bottom, top) + side wall
-            N = n_pts
-            center_b = N
-            center_t = 2 * N + 1
-            i_tri, j_tri, k_tri = [], [], []
-
-            # Bottom fan
-            for t in range(N - 1):
-                i_tri.append(center_b)
-                j_tri.append(t)
-                k_tri.append(t + 1)
-
-            # Top fan
-            for t in range(N - 1):
-                i_tri.append(center_t)
-                j_tri.append(t + N + 1)
-                k_tri.append(t + N)
-
-            # Side wall (quad pairs)
-            for t in range(N - 1):
-                i_tri.extend([t, t + 1, t + N])
-                j_tri.extend([t + 1, t + N + 1, t + N + 1])
-                k_tri.extend([t + N, t + N + 1, t])
-
-            color = PALETTE[i % len(PALETTE)]
-            pct = val / total * 100
-            fig.add_trace(go.Mesh3d(
-                x=x_all, y=y_all, z=z_all,
-                i=i_tri, j=j_tri, k=k_tri,
-                color=color, opacity=0.95,
-                name=f"{lbl} ({pct:.1f}%)",
-                showlegend=True,
-                hovertemplate=f"<b>{lbl}</b><br>Value: {val}<br>Share: {pct:.1f}%<extra></extra>"
-            ))
-            angle = end_angle
-
-        fig.update_layout(
-            scene=dict(
-                xaxis=dict(visible=False),
-                yaxis=dict(visible=False),
-                zaxis=dict(title="", range=[0, depth * 4]),
-                camera=dict(eye=dict(x=1.5, y=1.5, z=0.8))
-            ),
-            showlegend=True
+        fig = go.Figure(
+            data=[go.Pie(labels=_lbls, values=_vals, hole=0)]
         )
 
     elif plot_type == "heatmap":
         labels_x = data.get("labels_x", [])
         labels_y = data.get("labels_y", [])
         fig = go.Figure(
-            data=[go.Surface(z=values, x=labels_x, y=labels_y,
-                            colorscale="Blues")]
-        )
-        fig.update_layout(
-            scene=dict(
-                xaxis_title=x_label or "X",
-                yaxis_title=y_label or "Y",
-                zaxis_title="Value"
-            )
+            data=[go.Heatmap(z=values, x=labels_x, y=labels_y,
+                             colorscale="Blues")]
         )
 
     elif plot_type == "histogram":
-        counts, bin_edges = np.histogram(values, bins="auto")
-        spacing, depth = 0.0, 0.5
-        fig = go.Figure()
-
-        for i, (count, edge) in enumerate(zip(counts, bin_edges[:-1])):
-            bin_w = bin_edges[i + 1] - edge
-            lbl = f"{edge:.2g}–{bin_edges[i + 1]:.2g}"
-            hover = f"<b>{lbl}</b><br>Count: {count}<extra></extra>"
-            fig.add_trace(_make_bar_prism(
-                edge, edge + bin_w * 0.95, 0, depth, 0, count,
-                HEADER_COLOR_HEX, None, hover
-            ))
-
-        fig.update_layout(
-            scene=dict(
-                xaxis_title=x_label or "Value",
-                yaxis=dict(visible=False),
-                zaxis_title="Count"
-            ),
-            showlegend=False
+        fig = go.Figure(
+            data=[go.Histogram(x=values, marker_color=HEADER_COLOR_HEX)]
         )
 
     elif plot_type == "bar_stacked":
@@ -3761,33 +3595,17 @@ def _plot_interactive(
             "#1F4788", "#E07B39", "#2ECC71", "#E74C3C", "#9B59B6",
             "#F39C12", "#1ABC9C", "#E91E63", "#00BCD4", "#8BC34A",
         ]
-        spacing, width, depth = 1.2, 0.8, 0.5
         series_list = data.get("series", [])
-        fig = go.Figure()
-
-        for i, lbl in enumerate(labels):
-            z_base = 0
-            for s_idx, s in enumerate(series_list):
-                val = s.get("values", [])[i] if i < len(s.get("values", [])) else 0
-                color = PALETTE[s_idx % len(PALETTE)]
-                hover = f"<b>{lbl}</b><br>{s.get('name', f'Series {s_idx + 1}')}: {val}<extra></extra>"
-                fig.add_trace(_make_bar_prism(
-                    i * spacing, i * spacing + width, 0, depth,
-                    z_base, z_base + val, color,
-                    s.get("name", f"Series {s_idx + 1}") if i == 0 else None,
-                    hover
-                ))
-                z_base += val
-
-        fig.update_layout(
-            scene=dict(
-                xaxis=dict(tickvals=[i * spacing + 0.4 for i in range(len(labels))],
-                          ticktext=labels, title=x_label or ""),
-                yaxis=dict(visible=False),
-                zaxis_title=y_label or "Value"
-            ),
-            showlegend=True
-        )
+        traces = []
+        for idx, s in enumerate(series_list):
+            traces.append(go.Bar(
+                name=s.get("name", f"Series {idx + 1}"),
+                x=labels,
+                y=s.get("values", []),
+                marker_color=PALETTE[idx % len(PALETTE)],
+            ))
+        fig = go.Figure(data=traces)
+        fig.update_layout(barmode="stack")
 
     elif plot_type == "map":
         return _plot_leaflet_map(
