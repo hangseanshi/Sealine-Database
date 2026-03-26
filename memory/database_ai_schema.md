@@ -191,11 +191,6 @@ The **Event Date Indicator** is determined as follows:
 - `2025-03-01 (A)` — actual date; event has not yet occurred.
 - `2025-03-01 (E)` — estimated date.
 
-#### Alias for Container Status
-
-- **In Transit / Open / Not Arrived at Destination:** The container has no event where `Location Type` contains `POD` and `Event Occurred = Yes`.
-- **Departed / Left Origin:** The container has at least one event where `Location Type` contains `POL` (but **not** `Pre-POL`) and `Event Occurred = Yes`.
-
 ---
 
 ## Data Query Rules
@@ -227,13 +222,6 @@ OR [POD LOCode]       LIKE '%<location>%'
 ```
 
 This ensures matches on city names (e.g., `'Houston'`), country names (e.g., `'China'`), country codes (e.g., `'CN'`), and port codes (e.g., `'USHOU'`).
-
-### Date Query Patterns
-
-| User Phrase | Column To Query | Notes |
-|---|---|---|
-| `'arrival date'` | `[POD Date]` | Use regardless of `isActual` value. |
-| `'departure date'` | `[POL Date]` where `[POL isActual] = 1` (ATD) | If no ATD exists, fall back to `[POL Date]` where `[POL isActual] = 0` (ETD). Use `COALESCE` or separate joins to check actual first, then estimated. |
 
 ### Container Number Format
 
@@ -379,3 +367,29 @@ Split on `CHAR(10)`. For each line: `date` = first 10 chars, `actual` = `true` i
 ```
 
 `EventLines` is aggregated with `CHAR(10)` newline separators — pass directly to the renderer.
+
+---
+
+## Chart Types & Visualization
+
+All chart types render as **interactive 3D visualizations** using Plotly. The `generate_plot` tool automatically sets `interactive=true` for all chart types.
+
+### 3D Chart Types
+
+| Type | Description | Data Format | Notes |
+|------|-------------|-------------|-------|
+| **scatter** | 3D scatter plot with rotatable point cloud | `{"x": [...], "y": [...], "z": [...], "labels": [...]}` | `z` array optional; falls back to empty if not provided. `labels` appear on hover. |
+| **line** | 3D line chart through 3D space with markers | `{"x": [...], "y": [...], "z": [...]}` | `z` array optional; defaults to sequence index if not provided. |
+| **heatmap** | 3D surface plot (heat surface) | `{"labels_x": [...], "labels_y": [...], "values": [[...]]}` | `values` is a 2D grid (list of lists). Renders as an interactive 3D surface. |
+| **pie** | 3D cylindrical pie chart (Excel-style) | `{"labels": [...], "values": [...]}` | Renders as cylindrical wedges in 3D. Capped at 20 slices; remainder grouped as "Other". |
+| **bar** | 3D bar chart (rectangular prisms) | `{"labels": [...], "values": [...]}` | Each bar renders as a 3D rectangular prism. X-axis shows category labels. |
+| **bar_stacked** | 3D stacked bar chart (layered prisms) | `{"labels": [...], "series": [{"name": "SeriesA", "values": [...]}, ...]}` | Each series stacks vertically; uses distinct colors per series. |
+| **histogram** | 3D histogram (frequency distribution bars) | `{"values": [...]}` | Auto-bins values; renders as 3D prisms for each bin. |
+| **map** | Interactive geographic map (Leaflet.js) | `{"lat": [...], "lon": [...], "labels": [...], ...}` | Always interactive; not converted to 3D (uses 2D map tiles). |
+
+### Usage Notes
+
+- **3D axes:** `x_label` and `y_label` parameters are applied to the 3D scene axes (xaxis and yaxis) for `scatter`, `line`, and `heatmap`. For `bar`, `bar_stacked`, and `histogram`, axis labels default to descriptive names.
+- **Interactivity:** All 3D charts support mouse rotation, zoom, and pan. Hover tooltips show data values.
+- **Color scales:** `scatter` and `heatmap` use "Blues" colorscale by default. `pie` and `bar_stacked` use a multi-color palette.
+- **Data validation:** Empty `values` or mismatched array lengths are handled gracefully with fallback defaults.
